@@ -1,0 +1,19 @@
+{
+  "name": "canaa-telecom-sala-reuniao",
+  "version": "1.0.0",
+  "description": "Sistema de Reserva de Sala de Reunião — Canaã Telecom",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "npx nodemon server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.6.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.3"
+  },
+  "author": "Canaã Telecom",
+  "license": "MIT"
+}

@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="light">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Canaã Telecom — Central de Reservas</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: { display: ['"Exo 2"', 'sans-serif'], body: ['"DM Sans"', 'sans-serif'] },
+          colors: { canaa: { bg: '#080e1f', blue: '#1d4ed8', cyan: '#06b6d4' } }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body class="min-h-screen bg-slate-100 dark:bg-canaa-bg text-slate-900 dark:text-slate-100 font-body">
+
+  <!-- ── NAVBAR ─────────────────────────────────────────────── -->
+  <nav
+    class="sticky top-0 z-50 h-12 flex items-center bg-white dark:bg-[#0c1220] border-b border-slate-200 dark:border-white/10 px-4 gap-4">
+    <img src="canaa_logo.png" alt="Canaã" class="h-7 w-auto object-contain flex-shrink-0" />
+    <span
+      class="hidden sm:block text-xs font-display font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">Central
+      de Reservas</span>
+
+    <div class="flex-1"></div>
+
+    <!-- Relógio -->
+    <span id="relogioAoVivo"
+      class="hidden sm:block text-xs font-mono text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-white/5 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-white/10"></span>
+
+    <!-- Avatar + nome -->
+    <div class="hidden sm:flex items-center gap-2">
+      <div
+        class="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center text-white font-bold text-xs">
+        <span id="navAvatarLetra">?</span>
+      </div>
+      <div class="leading-none">
+        <p id="navNomeUsuario" class="text-xs font-semibold dark:text-slate-100">—</p>
+        <p id="navBadgeRole" class="text-[10px] font-bold uppercase text-canaa-cyan">—</p>
+      </div>
+    </div>
+
+    <!-- Tema -->
+    <button onclick="alternarTema()" id="btnTema" title="Alternar tema"
+      class="relative w-10 h-5 rounded-full border border-slate-300 dark:border-white/20 bg-slate-200 dark:bg-black/30 transition-all focus:outline-none flex-shrink-0">
+      <span id="themeThumb" class="theme-thumb flex items-center justify-center">
+        <svg id="iconSun" class="w-2.5 h-2.5 text-yellow-500 dark:hidden" fill="currentColor" viewBox="0 0 20 20">
+          <path fill-rule="evenodd"
+            d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z"
+            clip-rule="evenodd" />
+        </svg>
+        <svg id="iconMoon" class="w-2.5 h-2.5 text-blue-400 hidden dark:block" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
+        </svg>
+      </span>
+    </button>
+
+    <!-- Sair -->
+    <button onclick="logout()"
+      class="flex items-center gap-1 text-xs font-semibold text-red-500 dark:text-red-400 border border-red-300 dark:border-red-500/30 px-2.5 py-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-all flex-shrink-0">
+      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+      </svg>
+      Sair
+    </button>
+  </nav>
+
+  <!-- ── BANNER DE STATUS (slim) ───────────────────────────── -->
+  <div id="bannerStatus"
+    class="flex items-center gap-3 px-4 sm:px-6 py-2 text-xs font-medium transition-all duration-700 bg-emerald-500/10 border-b border-emerald-400/20 text-emerald-400">
+    <span id="bannerDot" class="w-2 h-2 rounded-full bg-emerald-400 status-dot-green flex-shrink-0"></span>
+    <span id="bannerTitulo" class="font-bold uppercase tracking-widest">SALA LIVRE</span>
+    <span id="bannerDetalhe" class="text-emerald-500/70">Nenhuma reunião presencial em andamento</span>
+  </div>
+
+  <!-- ── CONTEÚDO PRINCIPAL ─────────────────────────────────── -->
+  <main class="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-4 space-y-4">
+
+    <!-- KPIs — Container único com divisores internos (inspirado na referência) -->
+    <div
+      class="grid grid-cols-2 md:grid-cols-4 bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-white/10 rounded-xl overflow-hidden shadow-sm">
+
+      <div id="cardSalaStatus" class="p-4 border-r border-slate-200 dark:border-white/10 transition-all duration-500">
+        <div class="flex items-center gap-1.5 mb-1">
+          <span id="statusDot" class="w-2 h-2 rounded-full bg-emerald-400 status-dot-green flex-shrink-0"></span>
+          <p id="cardSalaLabel" class="text-[10px] font-bold uppercase tracking-widest text-slate-400">SALA LIVRE</p>
+        </div>
+        <p id="cardSalaDetalhe" class="text-lg font-display font-bold text-emerald-400">Disponível</p>
+      </div>
+
+      <div class="p-4 border-r border-slate-200 dark:border-white/10">
+        <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">REUNIÃO ATIVA</p>
+        <p id="cardReuniaoTitulo" class="text-lg font-display font-bold text-slate-200 truncate">—</p>
+      </div>
+
+      <div class="p-4 border-r border-slate-200 dark:border-white/10">
+        <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">REUNIÕES HOJE</p>
+        <p id="countReunioesHoje" class="text-3xl font-display font-bold text-blue-400">—</p>
+      </div>
+
+      <div class="p-4">
+        <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">PENDENTES</p>
+        <p id="countPendentes" class="text-3xl font-display font-bold text-yellow-400">—</p>
+      </div>
+    </div>
+
+    <!-- GRID PRINCIPAL: FORMULÁRIO + AGENDAMENTOS -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+      <!-- ── FORMULÁRIO (sem card) ──────────────────────────── -->
+      <div class="py-1">
+
+        <form id="formReserva" onsubmit="agendarReuniao(event)" class="space-y-2.5">
+
+          <input type="text" id="inputTitulo" placeholder="Título da Reunião" class="input-compact w-full" />
+
+          <input type="date" id="inputData"
+            class="input-compact w-full [color-scheme:light] dark:[color-scheme:dark]" />
+
+          <div class="grid grid-cols-2 gap-2">
+            <div class="relative">
+              <span
+                class="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-slate-400 pointer-events-none">INI</span>
+              <input type="time" id="inputInicio"
+                class="input-compact w-full pl-9 [color-scheme:light] dark:[color-scheme:dark]" />
+            </div>
+            <div class="relative">
+              <span
+                class="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-slate-400 pointer-events-none">FIM</span>
+              <input type="time" id="inputFim"
+                class="input-compact w-full pl-9 [color-scheme:light] dark:[color-scheme:dark]" />
+            </div>
+          </div>
+
+          <select id="selectModalidade" onchange="alternarModalidade()"
+            class="input-compact w-full [color-scheme:light] dark:[color-scheme:dark]">
+            <option value="presencial">Presencial</option>
+            <option value="online">Online</option>
+          </select>
+
+          <div id="boxLink" class="hidden">
+            <input type="url" id="inputLink" placeholder="https://meet.google.com/..." class="input-compact w-full" />
+          </div>
+
+
+          <textarea id="inputPreAta" rows="3" placeholder="Pré-Ata / Pauta da Reunião (opcional)"
+            class="input-compact w-full resize-none"></textarea>
+
+          <button type="submit"
+            class="btn-agendar w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-widest bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600 text-white shadow-md dark:shadow-[0_0_12px_rgba(6,182,212,0.35)] transition-all duration-200">
+            Confirmar Agendamento
+          </button>
+        </form>
+      </div>
+
+      <!-- ── PAINEL DE AGENDAMENTOS COM TABS ─────────────────── -->
+      <div
+        class="bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-white/10 shadow-sm overflow-hidden flex flex-col">
+
+        <!-- Tabs -->
+        <div class="flex border-b border-slate-100 dark:border-white/10">
+          <button id="tab-btn-proximos" onclick="trocarAba('proximos')"
+            class="flex-1 py-2.5 text-xs font-bold uppercase tracking-widest transition-all text-blue-600 dark:text-canaa-cyan border-b-2 border-blue-600 dark:border-canaa-cyan bg-blue-50/50 dark:bg-canaa-cyan/5">
+            Próximos
+          </button>
+          <button id="tab-btn-historico" onclick="trocarAba('historico')"
+            class="flex-1 py-2.5 text-xs font-bold uppercase tracking-widest transition-all text-slate-400 border-b-2 border-transparent hover:bg-slate-50 dark:hover:bg-white/5">
+            Histórico
+          </button>
+        </div>
+
+        <!-- Cabeçalho da tabela -->
+        <div
+          class="grid grid-cols-[70px_1fr_80px_70px] gap-2 px-3 py-1.5 bg-slate-50 dark:bg-white/[0.03] border-b border-slate-100 dark:border-white/10 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+          <span>Horário</span><span>Reunião</span><span class="text-center">Status</span><span
+            class="text-center">Tipo</span>
+        </div>
+
+        <!-- Lista -->
+        <div id="listaReservas" class="flex-grow overflow-y-auto h-[340px]">
+          <div class="text-center py-8 text-slate-400 text-xs">Carregando...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ANALYTICS + ADMIN ────────────────────────────────── -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+
+      <div class="bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-white/10 rounded-xl p-4 shadow-sm">
+        <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Mais Agendamentos</p>
+        <p id="topQtdNome" class="font-display font-bold text-sm dark:text-white truncate">—</p>
+        <p id="topQtdValor" class="text-xs text-blue-600 dark:text-canaa-cyan mt-0.5">—</p>
+      </div>
+
+      <div class="bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-white/10 rounded-xl p-4 shadow-sm">
+        <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Maior Tempo de Uso</p>
+        <p id="topTempoNome" class="font-display font-bold text-sm dark:text-white truncate">—</p>
+        <p id="topTempoValor" class="text-xs text-cyan-600 dark:text-canaa-cyan mt-0.5">—</p>
+      </div>
+
+      <div id="cardAdmin"
+        class="hidden bg-white dark:bg-[#0c1220] border border-slate-100 dark:border-red-500/20 rounded-xl p-4 shadow-sm">
+        <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Admin — Limpeza</p>
+        <p class="text-xs text-slate-500 dark:text-slate-400 mb-3">Apaga reuniões com status <strong
+            class="text-slate-700 dark:text-slate-200">Concluída</strong>.</p>
+        <button onclick="apagarConcluidas()"
+          class="w-full py-2 rounded-lg text-xs font-bold uppercase tracking-wider text-red-500 dark:text-red-400 border border-red-300 dark:border-red-500/30 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all">
+          Apagar Histórico Concluído
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <footer class="py-3 border-t border-slate-200 dark:border-white/10 dark:bg-black/20">
+    <p class="text-center text-[10px] text-slate-400">© 2026 Canaã Telecom — v2.1</p>
+  </footer>
+
+  <!-- ═══════════════════════════════════════════════════════
+       MODAL POPUP — Conflitos, Sucesso e Erros
+  ═══════════════════════════════════════════════════════ -->
+  <div id="modalOverlay" class="modal-overlay hidden" onclick="fecharModalFora(event)">
+    <div id="modalCard"
+      class="modal-card w-full max-w-sm mx-4 bg-[#0d1326] border border-white/10 rounded-2xl shadow-2xl p-5">
+      <div class="flex items-start gap-3">
+        <!-- Ícone -->
+        <div id="modalIconWrap"
+          class="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-base bg-red-500/20 text-red-400">
+          <span id="modalIcon">✕</span>
+        </div>
+        <!-- Conteúdo -->
+        <div class="flex-1 min-w-0">
+          <p id="modalTitulo" class="font-display font-bold text-sm text-white mb-1">Erro</p>
+          <p id="modalMsg" class="text-xs text-slate-300 leading-relaxed"></p>
+        </div>
+        <!-- Fechar -->
+        <button onclick="fecharModal()" class="text-slate-500 hover:text-white transition-colors flex-shrink-0 mt-0.5">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <!-- Barra de progresso para auto-close -->
+      <div id="modalBarWrap" class="hidden mt-4 h-0.5 bg-white/10 rounded-full overflow-hidden">
+        <div id="modalBar"
+          class="h-full rounded-full bg-emerald-400 transition-all duration-[2500ms] ease-linear w-full"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+
+</html>

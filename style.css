@@ -1,0 +1,284 @@
+/* ================================================================
+   style.css — Estilos Customizados do Sistema Canaã Telecom
+   ================================================================ */
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.font-display {
+  font-family: 'Exo 2', sans-serif;
+}
+
+/* ----------------------------------------------------------------
+   TOGGLE DE TEMA — posição controlada via JavaScript
+   ---------------------------------------------------------------- */
+.theme-thumb {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  transform: translateY(-50%);
+  width: 1rem;
+  height: 1rem;
+  border-radius: 9999px;
+  background-color: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: left 0.2s ease, background-color 0.2s ease;
+}
+
+/* ----------------------------------------------------------------
+   2. SCROLLBAR PERSONALIZADA (NOVO VISUAL NEON)
+   ---------------------------------------------------------------- */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(6, 182, 212, 0.3);
+  /* canaa-cyan com opacidade */
+  border-radius: 9999px;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(6, 182, 212, 0.5);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+/* ----------------------------------------------------------------
+   3. ANIMAÇÕES DE STATUS DA SALA (PULSO)
+   ---------------------------------------------------------------- */
+@keyframes statusPulse {
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
+  }
+
+  50% {
+    box-shadow: 0 0 0 8px rgba(16, 185, 129, 0);
+  }
+}
+
+.status-dot-green {
+  animation: statusPulse 2s infinite;
+}
+
+@keyframes statusPulseRed {
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5);
+  }
+
+  50% {
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+  }
+}
+
+.status-dot-red {
+  animation: statusPulseRed 2s infinite;
+}
+
+/* ----------------------------------------------------------------
+   4. ANIMAÇÕES DE ENTRADA DOS ELEMENTOS
+   ---------------------------------------------------------------- */
+@keyframes fadeIn {
+  0% {
+    opacity: 0;
+  }
+
+  100% {
+    opacity: 1;
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out;
+}
+
+@keyframes slideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.4s ease-out;
+}
+
+/* ----------------------------------------------------------------
+   5. CARDS DE RESERVA
+   ---------------------------------------------------------------- */
+.card-reserva {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card-reserva:hover {
+  transform: translateY(-2px);
+}
+
+/* ----------------------------------------------------------------
+   6. BOTÃO DE AGENDAR — EFEITO DE BRILHO (SHIMMER)
+   ---------------------------------------------------------------- */
+.btn-agendar {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-agendar::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -60%;
+  width: 40%;
+  height: 200%;
+  background: rgba(255, 255, 255, 0.15);
+  transform: skewX(-20deg);
+  transition: left 0.5s ease;
+}
+
+.btn-agendar:hover::after {
+  left: 120%;
+}
+
+/* ----------------------------------------------------------------
+   7. LOGO — ADAPTAÇÃO DE TEMA
+   ---------------------------------------------------------------- */
+#logoImg {
+  transition: filter 0.3s ease, mix-blend-mode 0.1s;
+  height: 40px;
+  width: auto;
+  object-fit: contain;
+}
+
+/* ----------------------------------------------------------------
+   8. INPUTS — ESTILO DO SELETOR DE HORA
+   ---------------------------------------------------------------- */
+input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.5);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+input[type="time"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
+.dark input[type="time"]::-webkit-calendar-picker-indicator,
+.dark input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
+
+/* ----------------------------------------------------------------
+   9. NAVBAR E RESPONSIVIDADE
+   ---------------------------------------------------------------- */
+.navbar-logo-wrapper {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+@media (max-width: 380px) {
+  #logoImg {
+    height: 32px;
+  }
+
+  .grid-cols-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ----------------------------------------------------------------
+   10. INPUT COMPACTO
+   ---------------------------------------------------------------- */
+
+/* Light mode (padrão) */
+.input-compact {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.8rem;
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #0f172a;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  outline: none;
+  width: 100%;
+}
+
+/* Dark mode override */
+.dark .input-compact {
+  background-color: rgba(0, 0, 0, 0.25);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #f1f5f9;
+}
+
+.input-compact:focus {
+  border-color: #06b6d4;
+  box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.15);
+}
+
+.input-compact::placeholder {
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.dark .input-compact::placeholder {
+  color: #475569;
+}
+
+/* ----------------------------------------------------------------
+   11. MODAL POPUP
+   ---------------------------------------------------------------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-overlay.hidden {
+  display: none;
+}
+
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.modal-card {
+  animation: modalIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
