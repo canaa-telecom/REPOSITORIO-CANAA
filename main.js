@@ -343,6 +343,17 @@ function formatarData(iso) {
   return `${dia}/${mes}/${ano}`;
 }
 
+/** Escapa caracteres HTML para prevenir XSS */
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /** Retorna o HTML do badge de status dinâmico */
 function renderBadgeStatus(statusDinamico) {
   switch (statusDinamico) {
@@ -360,54 +371,68 @@ function renderCartaoReserva(r) {
 
   // Badge de status
   const statusBadge = {
-    'Concluída': '<span class="text-[10px] font-bold text-slate-400">Concluída</span>',
-    'Em andamento': '<span class="text-[10px] font-bold text-emerald-400 animate-pulse">● Ativo</span>',
-    'Agendada': '<span class="text-[10px] font-bold text-blue-400">Agendada</span>',
-  }[r.statusDinamico] || '<span class="text-[10px] text-slate-500">—</span>';
+    'Concluída': '<span class="text-xs font-semibold text-slate-500 dark:text-slate-400">Concluída</span>',
+    'Em andamento': '<span class="text-xs font-bold text-emerald-600 dark:text-emerald-400 animate-pulse">\u25cf Ativo</span>',
+    'Agendada': '<span class="text-xs font-semibold text-blue-600 dark:text-blue-400">Agendada</span>',
+  }[r.statusDinamico] || '<span class="text-xs text-slate-400">\u2014</span>';
 
   // Badge de modalidade
   const tipoBadge = r.modalidade === 'online'
-    ? `<a href="${r.link_reuniao || '#'}" target="_blank" class="text-[10px] font-bold text-purple-400 hover:underline">Online</a>`
-    : '<span class="text-[10px] font-bold text-slate-400">Presencial</span>';
+    ? `<a href="${r.link_reuniao || '#'}" target="_blank" class="text-xs font-bold text-purple-600 dark:text-purple-400 hover:underline">Online</a>`
+    : '<span class="text-xs font-semibold text-slate-500 dark:text-slate-400">Presencial</span>';
 
   const dataDDMMYYYY = formatarData(r.data);
 
+  // Título e gestor com XSS escapado
+  const titulo = escapeHtml(r.titulo);
+  const gestor = escapeHtml(r.gestor) || '—';
+
   // Pré-Ata expansiva
   const preAtaHtml = r.pre_ata ? `
-    <div class="mt-1.5 col-span-4">
-      <button onclick="togglePreAta(${r.id})" class="text-[10px] text-cyan-500 hover:text-cyan-400 font-semibold flex items-center gap-1">
+    <div class="mt-2 col-span-4">
+      <button onclick="togglePreAta(${r.id})" class="text-xs text-cyan-600 dark:text-cyan-500 hover:text-cyan-500 dark:hover:text-cyan-400 font-semibold flex items-center gap-1">
         <svg id="chevron-${r.id}" class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
         Ver Pauta
       </button>
-      <div id="preata-${r.id}" class="hidden mt-1 text-[10px] text-slate-300 bg-white/5 rounded px-2 py-1.5 leading-relaxed whitespace-pre-wrap">${r.pre_ata}</div>
+      <div id="preata-${r.id}" class="hidden mt-1.5 text-xs text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-white/5 rounded-lg px-3 py-2 leading-relaxed whitespace-pre-wrap">${escapeHtml(r.pre_ata)}</div>
     </div>` : '';
 
-  // RSVP — mostra apenas em Próximos (Agendada ou Em andamento)
+  // RSVP — mostra botão apenas em Próximos (Agendada ou Em andamento)
   const podeConfirmar = r.statusDinamico === 'Agendada' || r.statusDinamico === 'Em andamento';
   const confirmados = r.confirmados ?? 0;
   const euConfirmei = r.euConfirmei;
+  const criadorDaReuniao = usuario?.id === r.usuario_id;
+  const participantes = r.participantesNomes || [];
+
+  // Lista de nomes: visível somente para o criador da reunião
+  const listaNomesHtml = (criadorDaReuniao && participantes.length > 0) ? `
+    <div id="rsvp-nomes-${r.id}" class="col-span-4 mt-1 flex flex-wrap gap-1">
+      ${participantes.map(n => `<span class="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 font-medium">${escapeHtml(n)}</span>`).join('')}
+    </div>` : '';
 
   const rsvpHtml = podeConfirmar ? `
-    <div class="col-span-4 flex items-center gap-2 mt-1">
-      <button id="rsvp-btn-${r.id}" onclick="confirmarPresenca(${r.id})"
-        class="text-[10px] font-bold px-2.5 py-1 rounded-full transition-all ${euConfirmei
-      ? 'bg-emerald-900/40 text-emerald-300 hover:bg-red-900/30 hover:text-red-300'
-      : 'bg-white/5 text-slate-400 hover:bg-emerald-900/30 hover:text-emerald-300'
+    <div class="col-span-4 flex items-center gap-2 mt-1.5">
+      <button id="rsvp-btn-${r.id}" onclick="confirmarPresenca(${r.id}, ${criadorDaReuniao})"
+        class="text-xs font-bold px-3 py-1 rounded-full transition-all ${euConfirmei
+      ? 'bg-emerald-100 text-emerald-700 hover:bg-red-100 hover:text-red-600 dark:bg-emerald-900/40 dark:text-emerald-300 dark:hover:bg-red-900/30 dark:hover:text-red-300'
+      : 'bg-slate-100 text-slate-600 hover:bg-emerald-100 hover:text-emerald-700 dark:bg-white/5 dark:text-slate-400 dark:hover:bg-emerald-900/30 dark:hover:text-emerald-300'
     }">
-        ${euConfirmei ? '✓ Confirmado' : '○ Confirmar Presença'}
+        ${euConfirmei ? '\u2713 Confirmado' : '\u25cb Confirmar Presen\u00e7a'}
       </button>
-      <span id="rsvp-count-${r.id}" class="text-[10px] text-slate-500">${confirmados} confirmado${confirmados !== 1 ? 's' : ''}</span>
-    </div>` : (confirmados > 0 ? `
-    <div class="col-span-4 mt-1">
-      <span class="text-[10px] text-slate-500">✓ ${confirmados} confirmado${confirmados !== 1 ? 's' : ''}</span>
+      <span id="rsvp-count-${r.id}" class="text-xs text-slate-500 dark:text-slate-500">${confirmados} confirmado${confirmados !== 1 ? 's' : ''}</span>
+    </div>
+    ${listaNomesHtml}` : (confirmados > 0 ? `
+    <div class="col-span-4 mt-1.5 flex flex-wrap items-center gap-1">
+      <span class="text-xs text-slate-500">\u2713 ${confirmados} confirmado${confirmados !== 1 ? 's' : ''}</span>
+      ${listaNomesHtml}
     </div>` : '');
 
   // Botão de exclusão — visível apenas para admins
   const adminDeleteBtn = isAdmin ? `
-    <div class="col-span-4 mt-1">
-      <button onclick="cancelarReserva(${r.id}, '${r.titulo.replace(/'/g, '\\&apos;')}')" 
-        class="text-[10px] font-semibold text-red-400 hover:text-red-300 flex items-center gap-1 transition-colors">
-        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <div class="col-span-4 mt-1.5">
+      <button onclick="cancelarReserva(${r.id}, '${escapeHtml(r.titulo).replace(/'/g, '&#39;')}')" 
+        class="text-xs font-semibold text-red-500 dark:text-red-400 hover:text-red-600 dark:hover:text-red-300 flex items-center gap-1 transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
         </svg>
         Apagar reunião
@@ -415,18 +440,18 @@ function renderCartaoReserva(r) {
     </div>` : '';
 
   return `
-    <div id="card-reserva-${r.id}" class="px-3 py-2 border-b border-slate-100 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/[0.03] transition-colors">
-      <div class="grid grid-cols-[70px_1fr_80px_70px] gap-2 items-center">
+    <div id="card-reserva-${r.id}" class="px-4 py-3 border-b border-slate-100 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/[0.03] transition-colors">
+      <div class="grid grid-cols-[80px_1fr_90px_80px] gap-2 items-start">
         <div class="leading-tight">
-          <p class="text-[10px] text-slate-400 font-mono">${dataDDMMYYYY}</p>
-          <p class="text-xs font-bold text-blue-600 dark:text-canaa-cyan">${r.horaInicio}<span class="text-slate-400 font-normal">→${r.horaFim}</span></p>
+          <p class="text-xs text-slate-500 dark:text-slate-400 font-mono">${dataDDMMYYYY}</p>
+          <p class="text-sm font-bold text-blue-600 dark:text-canaa-cyan">${r.horaInicio}<span class="text-slate-400 font-normal text-xs">→${r.horaFim}</span></p>
         </div>
         <div class="min-w-0">
-          <p class="text-xs font-semibold dark:text-slate-100 truncate">${r.titulo}</p>
-          <p class="text-[10px] text-slate-400 truncate">${r.gestor || '—'}</p>
+          <p class="text-sm font-semibold dark:text-slate-100 truncate">${titulo}</p>
+          <p class="text-xs text-slate-400 truncate">${gestor}</p>
         </div>
-        <div class="text-center">${statusBadge}</div>
-        <div class="text-center">${tipoBadge}</div>
+        <div class="text-center pt-0.5">${statusBadge}</div>
+        <div class="text-center pt-0.5">${tipoBadge}</div>
         ${preAtaHtml}
         ${rsvpHtml}
         ${adminDeleteBtn}
@@ -444,7 +469,8 @@ function togglePreAta(id) {
 }
 
 /** Toggle de RSVP via PATCH /api/reservas/:id/presenca */
-async function confirmarPresenca(reservaId) {
+async function confirmarPresenca(reservaId, criador = false) {
+  const usuario = obterUsuario();
   try {
     const res = await fetch(`${URL_API}/reservas/${reservaId}/presenca`, {
       method: 'PATCH',
@@ -461,17 +487,51 @@ async function confirmarPresenca(reservaId) {
     if (dados.confirmou) {
       btn.className = btn.className.replace('bg-white/5 text-slate-400 hover:bg-emerald-900/30 hover:text-emerald-300',
         'bg-emerald-900/40 text-emerald-300 hover:bg-red-900/30 hover:text-red-300');
-      btn.textContent = '✓ Confirmado';
+      btn.textContent = '\u2713 Confirmado';
     } else {
       btn.className = btn.className.replace('bg-emerald-900/40 text-emerald-300 hover:bg-red-900/30 hover:text-red-300',
         'bg-white/5 text-slate-400 hover:bg-emerald-900/30 hover:text-emerald-300');
-      btn.textContent = '○ Confirmar Presença';
+      btn.textContent = '\u25cb Confirmar Presen\u00e7a';
     }
     const n = dados.confirmados;
     count.textContent = `${n} confirmado${n !== 1 ? 's' : ''}`;
 
+    // Atualiza a lista de nomes inline (visível somente para o criador)
+    if (criador && usuario) {
+      let nomesDiv = document.getElementById(`rsvp-nomes-${reservaId}`);
+
+      if (dados.confirmou) {
+        // Adiciona chip com o nome do usuário logado
+        if (!nomesDiv) {
+          // Cria o container se ainda não existe
+          nomesDiv = document.createElement('div');
+          nomesDiv.id = `rsvp-nomes-${reservaId}`;
+          nomesDiv.className = 'col-span-4 mt-1 flex flex-wrap gap-1';
+          // Insere após o container do botão
+          btn.closest('.col-span-4')?.after(nomesDiv);
+        }
+        // Evita duplicação: remove chip anterior do mesmo usuário se existir
+        const chipExistente = nomesDiv.querySelector(`[data-uid="${usuario.id}"]`);
+        if (!chipExistente) {
+          const chip = document.createElement('span');
+          chip.dataset.uid = usuario.id;
+          chip.className = 'text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 font-medium';
+          chip.textContent = escapeHtml(usuario.nome);
+          nomesDiv.appendChild(chip);
+        }
+      } else {
+        // Remove o chip do usuário logado
+        if (nomesDiv) {
+          const chip = nomesDiv.querySelector(`[data-uid="${usuario.id}"]`);
+          chip?.remove();
+          // Se não sobrou nenhum chip, remove o container
+          if (nomesDiv.children.length === 0) nomesDiv.remove();
+        }
+      }
+    }
+
   } catch (err) {
-    console.error('Erro ao confirmar presença:', err);
+    console.error('Erro ao confirmar presen\u00e7a:', err);
   }
 }
 
@@ -567,29 +627,52 @@ async function cancelarReserva(id, titulo) {
 // ADMIN — Apagar todas as reuniões concluídas
 // ------------------------------------------------------------
 async function apagarConcluidas() {
-  const confirmar = window.confirm('Deseja apagar todas as reuniões com status "Concluída"? Esta ação não pode ser desfeita.');
-  if (!confirmar) return;
+  // Usa o modal customizado em vez do window.confirm nativo
+  mostrarModal('aviso', 'Deseja apagar todas as reuniões com status "Concluída"? Esta ação não pode ser desfeita.');
 
-  try {
-    const res = await fetch(`${URL_API}/historico/concluidas`, {
-      method: 'DELETE',
-      headers: headersAuth()
-    });
+  // Remove botões anteriores se existirem
+  document.getElementById('adminConfirmarBtn')?.remove();
+  document.getElementById('adminCancelarBtn')?.remove();
 
-    if (checar401(res.status)) return;
-    const dados = await res.json();
+  const barWrap = document.getElementById('modalBarWrap');
+  const modalCard = document.getElementById('modalCard');
 
-    mostrarModal('sucesso', dados.mensagem, true);
+  const botoesDiv = document.createElement('div');
+  botoesDiv.className = 'flex gap-2 mt-4 justify-end';
 
-    // Recarrega tudo após apagar
-    carregarDashboard();
-    carregarLista(abaAtiva);
-    carregarAnalytics();
+  const btnCancelar = document.createElement('button');
+  btnCancelar.id = 'adminCancelarBtn';
+  btnCancelar.textContent = 'Não';
+  btnCancelar.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-all';
+  btnCancelar.onclick = () => { botoesDiv.remove(); fecharModal(); };
 
-  } catch (err) {
-    console.error('Erro ao apagar histórico:', err);
-    mostrarModal('erro', 'Erro ao conectar com o servidor.');
-  }
+  const btnConfirmar = document.createElement('button');
+  btnConfirmar.id = 'adminConfirmarBtn';
+  btnConfirmar.textContent = 'Sim, apagar';
+  btnConfirmar.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all';
+  btnConfirmar.onclick = async () => {
+    botoesDiv.remove();
+    fecharModal();
+    try {
+      const res = await fetch(`${URL_API}/historico/concluidas`, {
+        method: 'DELETE',
+        headers: headersAuth()
+      });
+      if (checar401(res.status)) return;
+      const dados = await res.json();
+      mostrarModal('sucesso', dados.mensagem, true);
+      carregarDashboard();
+      carregarLista(abaAtiva);
+      carregarAnalytics();
+    } catch (err) {
+      console.error('Erro ao apagar histórico:', err);
+      mostrarModal('erro', 'Erro ao conectar com o servidor.');
+    }
+  };
+
+  botoesDiv.appendChild(btnCancelar);
+  botoesDiv.appendChild(btnConfirmar);
+  barWrap ? modalCard.insertBefore(botoesDiv, barWrap) : modalCard.appendChild(botoesDiv);
 }
 
 // ------------------------------------------------------------

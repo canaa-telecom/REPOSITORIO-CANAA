@@ -5,6 +5,7 @@
 // ============================================================
 
 // ── 1. IMPORTAÇÕES ──────────────────────────────────────────
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -14,10 +15,19 @@ const bcrypt = require('bcryptjs');
 
 // ── 2. CONFIGURAÇÃO ─────────────────────────────────────────
 const app = express();
-const PORT = 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'canaa_telecom_secret_2026';
+const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET;
 
-app.use(cors());
+if (!JWT_SECRET) {
+  console.error('❌ ERRO FATAL: JWT_SECRET não definido. Crie o arquivo .env com JWT_SECRET=<segredo_forte>');
+  process.exit(1);
+}
+
+const corsOptions = {
+  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
@@ -63,11 +73,11 @@ function inicializarBanco() {
   // Seed: cria o admin padrão se não existir nenhum
   const jaExisteAdmin = db.prepare('SELECT id FROM usuarios WHERE role = ?').get('admin');
   if (!jaExisteAdmin) {
-    const senhaHash = bcrypt.hashSync('admin123', 10);
+    const senhaHash = bcrypt.hashSync('Cna!@#123', 10);
     db.prepare('INSERT INTO usuarios (nome, email, senha, role) VALUES (?, ?, ?, ?)').run(
-      'Administrador', 'admin@canaa.com', senhaHash, 'admin'
+      'Administrador', 'ti@canaatelecom.com.br', senhaHash, 'admin'
     );
-    console.log('✅ Admin padrão criado: admin@canaa.com / admin123');
+    console.log('✅ Admin padrão criado: ti@canaatelecom.com.br');
 
     const adminId = db.prepare('SELECT id FROM usuarios WHERE role = ?').get('admin').id;
     const dataHoje = hoje();
@@ -146,6 +156,18 @@ function horaParaMinutos(hora) {
 function temConflito(inicio1, fim1, inicio2, fim2) {
   return horaParaMinutos(inicio1) < horaParaMinutos(fim2) &&
     horaParaMinutos(fim1) > horaParaMinutos(inicio2);
+}
+
+/** Valida formato YYYY-MM-DD */
+function isDataValida(str) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(str) && !isNaN(Date.parse(str));
+}
+
+/** Valida formato HH:MM */
+function isHoraValida(str) {
+  if (!/^\d{2}:\d{2}$/.test(str)) return false;
+  const [h, m] = str.split(':').map(Number);
+  return h >= 0 && h <= 23 && m >= 0 && m <= 59;
 }
 
 /** Retorna a hora atual no formato "HH:MM" */
@@ -282,7 +304,10 @@ app.get('/api/reservas', autenticar, (req, res) => {
     SELECT r.*,
            u.nome AS gestor,
            (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
-           (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = ?) AS euConfirmei
+           (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = ?) AS euConfirmei,
+           (SELECT GROUP_CONCAT(u2.nome, '||') FROM presencas p2
+            JOIN usuarios u2 ON u2.id = p2.usuario_id
+            WHERE p2.reserva_id = r.id) AS participantesNomes
     FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
     WHERE r.data >= ?
     ORDER BY r.data ASC, r.horaInicio ASC
@@ -291,7 +316,8 @@ app.get('/api/reservas', autenticar, (req, res) => {
   const comStatus = reservas.map(r => ({
     ...r,
     statusDinamico: calcularStatusDinamico(r),
-    euConfirmei: r.euConfirmei > 0
+    euConfirmei: r.euConfirmei > 0,
+    participantesNomes: r.participantesNomes ? r.participantesNomes.split('||') : []
   }));
 
   res.json(comStatus);
@@ -311,17 +337,25 @@ app.post('/api/reservas', autenticar, (req, res) => {
     return res.status(400).json({ erro: true, mensagem: 'Todos os campos são obrigatórios.' });
   }
 
-  // Validação 2: modalidade online exige link
+  // Validação 2: formatos válidos de data e hora
+  if (!isDataValida(data)) {
+    return res.status(400).json({ erro: true, mensagem: 'Formato de data inválido. Use YYYY-MM-DD.' });
+  }
+  if (!isHoraValida(horaInicio) || !isHoraValida(horaFim)) {
+    return res.status(400).json({ erro: true, mensagem: 'Formato de hora inválido. Use HH:MM.' });
+  }
+
+  // Validação 3: modalidade online exige link
   if (modalidade === 'online' && !link_reuniao) {
     return res.status(400).json({ erro: true, mensagem: 'Reuniões online exigem um link de acesso.' });
   }
 
-  // Validação 3: hora início antes de hora fim
+  // Validação 4: hora início antes de hora fim
   if (horaParaMinutos(horaInicio) >= horaParaMinutos(horaFim)) {
     return res.status(400).json({ erro: true, mensagem: 'A hora de início deve ser anterior ao término.' });
   }
 
-  // Validação 4: conflito de sala apenas com reuniões PRESENCIAIS confirmadas
+  // Validação 5: conflito de sala apenas com reuniões PRESENCIAIS confirmadas
   if (modalidade === 'presencial') {
     const reservasDaData = db.prepare(`
       SELECT * FROM reservas
@@ -422,7 +456,10 @@ app.get('/api/historico', autenticar, (req, res) => {
     todas = db.prepare(`
       SELECT r.*, u.nome AS gestor, u.email AS emailGestor,
              (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
-             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = ?) AS euConfirmei
+             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = ?) AS euConfirmei,
+             (SELECT GROUP_CONCAT(u2.nome, '||') FROM presencas p2
+              JOIN usuarios u2 ON u2.id = p2.usuario_id
+              WHERE p2.reserva_id = r.id) AS participantesNomes
       FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
       ORDER BY r.data DESC, r.horaInicio ASC
     `).all(usuarioId);
@@ -430,7 +467,10 @@ app.get('/api/historico', autenticar, (req, res) => {
     todas = db.prepare(`
       SELECT r.*, u.nome AS gestor,
              (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
-             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = ?) AS euConfirmei
+             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = ?) AS euConfirmei,
+             (SELECT GROUP_CONCAT(u2.nome, '||') FROM presencas p2
+              JOIN usuarios u2 ON u2.id = p2.usuario_id
+              WHERE p2.reserva_id = r.id) AS participantesNomes
       FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
       WHERE r.usuario_id = ?
       ORDER BY r.data DESC, r.horaInicio ASC
@@ -440,7 +480,8 @@ app.get('/api/historico', autenticar, (req, res) => {
   const comStatus = todas.map(r => ({
     ...r,
     statusDinamico: calcularStatusDinamico(r),
-    euConfirmei: r.euConfirmei > 0
+    euConfirmei: r.euConfirmei > 0,
+    participantesNomes: r.participantesNomes ? r.participantesNomes.split('||') : []
   }));
   res.json(comStatus);
 });
@@ -512,5 +553,5 @@ inicializarBanco();
 app.listen(PORT, () => {
   console.log(`\n✅ Servidor Canaã Telecom v2.2 rodando!`);
   console.log(`🌐 Acesse: http://localhost:${PORT}`);
-  console.log(`🔑 Admin: admin@canaa.com / admin123\n`);
+  console.log(`🔑 Admin: ti@canaatelecom.com.br\n`);
 });
