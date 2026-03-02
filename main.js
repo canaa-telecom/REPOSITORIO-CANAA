@@ -676,6 +676,30 @@ async function apagarConcluidas() {
 }
 
 // ------------------------------------------------------------
+// ATUALIZAÇÃO EM TEMPO REAL — Server-Sent Events
+// ------------------------------------------------------------
+
+/** Conecta ao endpoint SSE e recarrega os dados ao receber eventos */
+function iniciarSSE() {
+  const sse = new EventSource(`${URL_API.replace('/api', '')}/api/eventos`);
+
+  sse.addEventListener('atualizacao', () => {
+    carregarDashboard();
+    carregarLista(abaAtiva);
+    carregarAnalytics();
+  });
+
+  sse.onerror = () => {
+    // O EventSource reconecta automaticamente — apenas loga o erro sem alertar
+    console.warn('SSE: conexão perdida, aguardando reconexão automática...');
+  };
+}
+
+// ------------------------------------------------------------
 // INICIALIZAÇÃO
 // ------------------------------------------------------------
-window.onload = init;
+window.onload = () => {
+  init();
+  // Inicia o listener de atualizações em tempo real (somente se logado)
+  if (obterToken()) iniciarSSE();
+};

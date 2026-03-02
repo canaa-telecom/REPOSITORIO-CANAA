@@ -34,6 +34,17 @@ app.use(express.static(path.join(__dirname)));
 // ── 3. BANCO DE DADOS ────────────────────────────────────────
 const db = new Database(path.join(__dirname, 'sala_reuniao.db'));
 
+// ── 4. SERVER-SENT EVENTS ────────────────────────────────────
+/** Conjunto de respostas SSE ativas (um por aba aberta) */
+const sseClients = new Set();
+
+/** Notifica todos os clientes conectados que houve uma atualização */
+function notificarClientes(evento = 'atualizacao') {
+  for (const client of sseClients) {
+    client.write(`event: ${evento}\ndata: ok\n\n`);
+  }
+}
+
 // ============================================================
 // 4. INICIALIZAÇÃO E MIGRAÇÃO DO BANCO
 // ============================================================
@@ -228,6 +239,22 @@ function apenasAdmin(req, res, next) {
 // 7. ROTAS DA API
 // ============================================================
 
+// ── GET /api/eventos (SSE) ───────────────────────────────────
+// Endpoint público: só envia um sinal genérico sem dados sensíveis.
+// O frontend recarrega os dados via endpoints autenticados ao receber o evento.
+app.get('/api/eventos', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  // Envia um heartbeat imediato para confirmar a conexão
+  res.write(': conectado\n\n');
+
+  sseClients.add(res);
+  req.on('close', () => sseClients.delete(res));
+});
+
 // ── POST /api/login ──────────────────────────────────────────
 app.post('/api/login', (req, res) => {
   const { email, senha } = req.body;
@@ -397,6 +424,7 @@ app.post('/api/reservas', autenticar, (req, res) => {
     mensagem: 'Reserva criada com sucesso!',
     reserva: { ...novaReserva, statusDinamico: calcularStatusDinamico(novaReserva), euConfirmei: false }
   });
+  notificarClientes();
 });
 
 // ── DELETE /api/reservas/:id ─────────────────────────────────
@@ -413,6 +441,7 @@ app.delete('/api/reservas/:id', autenticar, (req, res) => {
   }
 
   db.prepare('DELETE FROM reservas WHERE id = ?').run(id);
+  notificarClientes();
   res.json({ erro: false, mensagem: 'Reserva cancelada com sucesso.' });
 });
 
@@ -444,6 +473,7 @@ app.patch('/api/reservas/:id/presenca', autenticar, (req, res) => {
     confirmou: !jaConfirmou,
     confirmados
   });
+  notificarClientes();
 });
 
 // ── GET /api/historico ─────────────────────────────────────────
@@ -504,6 +534,7 @@ app.delete('/api/historico/concluidas', autenticar, apenasAdmin, (req, res) => {
     mensagem: `${resultado.changes} reunião(ões) concluída(s) foram apagada(s).`,
     apagadas: resultado.changes
   });
+  notificarClientes();
 });
 
 // ── GET /api/estatisticas ────────────────────────────────────
