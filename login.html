@@ -1,10 +1,17 @@
 <!DOCTYPE html>
-<html lang="pt-BR" class="dark">
+<html lang="pt-BR">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login — Canaã Telecom</title>
+    <link rel="icon" type="image/png" href="/canaa_logo.png">
+    <!-- Aplica tema salvo ANTES do render para evitar flash -->
+    <script>
+        if (localStorage.getItem('canaa_tema') === 'dark') {
+            document.documentElement.classList.add('dark');
+        }
+    </script>
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -184,10 +191,114 @@
         .animate-slide-up {
             animation: slideUp 0.5s ease-out forwards;
         }
+
+        /* ── TEMA CLARO — overrides ── */
+        html:not(.dark) body {
+            background-color: #eef2ff;
+        }
+
+        html:not(.dark) .orb-1 {
+            background: #6366f1;
+            opacity: 0.10;
+        }
+
+        html:not(.dark) .orb-2 {
+            background: #06b6d4;
+            opacity: 0.10;
+        }
+
+        html:not(.dark) .orb-3 {
+            background: #a78bfa;
+            opacity: 0.08;
+        }
+
+        html:not(.dark) .glass-card {
+            background: rgba(255, 255, 255, 0.85);
+            border: 1px solid rgba(99, 102, 241, 0.15);
+            box-shadow: 0 25px 50px rgba(99, 102, 241, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+        }
+
+        html:not(.dark) .input-neon {
+            background: #f8fafc;
+            border: 1px solid #cbd5e1;
+            color: #0f172a;
+        }
+
+        html:not(.dark) .input-neon:focus {
+            border-color: #6366f1;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+        }
+
+        html:not(.dark) .input-neon::placeholder {
+            color: #94a3b8;
+        }
+
+        html:not(.dark) h1 {
+            color: #1e293b !important;
+        }
+
+        html:not(.dark) label {
+            color: #64748b !important;
+        }
+
+        html:not(.dark) p.text-slate-400 {
+            color: #64748b !important;
+        }
+
+        html:not(.dark) p.text-slate-600 {
+            color: #94a3b8 !important;
+        }
+
+        /* Botão de toggle de tema */
+        .btn-tema-login {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 50;
+            width: 2.25rem;
+            height: 2.25rem;
+            border-radius: 9999px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: background 0.2s, box-shadow 0.2s;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
+
+        html.dark .btn-tema-login {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: #94a3b8;
+        }
+
+        html:not(.dark) .btn-tema-login {
+            background: rgba(255, 255, 255, 0.75);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            color: #64748b;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .btn-tema-login:hover {
+            opacity: 0.8;
+        }
     </style>
 </head>
 
 <body class="bg-canaa-bg bg-grid flex items-center justify-center min-h-screen">
+
+    <!-- Botão de alternância de tema -->
+    <button onclick="alternarTemaLogin()" class="btn-tema-login" title="Alternar tema">
+        <svg id="loginIconSun" class="w-4 h-4 hidden" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd"
+                d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z"
+                clip-rule="evenodd" />
+        </svg>
+        <svg id="loginIconMoon" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
+        </svg>
+    </button>
 
     <!-- Esferas decorativas -->
     <div class="orb orb-1"></div>
@@ -269,6 +380,25 @@
         if (localStorage.getItem('canaa_token')) {
             window.location.href = '/index.html';
         }
+
+        /** Inicializa o ícone correto conforme o tema atual */
+        function sincronizarIconeTema() {
+            const isDark = document.documentElement.classList.contains('dark');
+            document.getElementById('loginIconSun').classList.toggle('hidden', !isDark);
+            document.getElementById('loginIconMoon').classList.toggle('hidden', isDark);
+        }
+
+        /** Alterna entre dark e light na tela de login */
+        function alternarTemaLogin() {
+            document.documentElement.classList.toggle('dark');
+            sincronizarIconeTema();
+            // Persiste a preferência do usuário
+            const isDark = document.documentElement.classList.contains('dark');
+            localStorage.setItem('canaa_tema', isDark ? 'dark' : 'light');
+        }
+
+        // Aplica ícone correto ao carregar
+        sincronizarIconeTema();
 
         /** Alterna visibilidade da senha */
         function alternarSenha() {

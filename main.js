@@ -44,6 +44,12 @@ function init() {
     document.getElementById('cardAdmin').classList.remove('hidden');
   }
 
+  // Preenche data padrão (hoje) e bloqueia datas passadas
+  const inputData = document.getElementById('inputData');
+  const dataHoje = new Date().toISOString().split('T')[0];
+  inputData.value = dataHoje;
+  inputData.min = dataHoje;
+
   // Carrega tudo
   carregarDashboard();
   carregarLista('proximos');
@@ -78,6 +84,8 @@ function alternarTema() {
   document.getElementById('iconSun').classList.toggle('hidden', isDark);
   document.getElementById('iconMoon').classList.toggle('hidden', !isDark);
   atualizarToggle(isDark);
+  // Persiste a preferência do usuário
+  localStorage.setItem('canaa_tema', isDark ? 'dark' : 'light');
 }
 
 // ------------------------------------------------------------
@@ -231,6 +239,11 @@ async function carregarDashboard() {
       bannerDet.textContent = `Uso presencial por ${status.reservaAtiva?.gestor || '—'} até ${status.reservaAtiva?.horaFim || '—'}`;
       bannerDot.className = 'w-2 h-2 rounded-full bg-red-400 status-dot-red flex-shrink-0';
     }
+
+    // Atualiza o título da aba dinamicamente
+    document.title = status.salaLivre
+      ? '🟢 SALA LIVRE — Canaã Telecom'
+      : `🔴 OCUPADA: ${status.reservaAtiva?.titulo || 'Em uso'} — Canaã Telecom`;
 
     const relogio = document.getElementById('relogioAoVivo');
     if (relogio) relogio.textContent = `🕐 ${status.horaAtual}`;
@@ -702,4 +715,13 @@ window.onload = () => {
   init();
   // Inicia o listener de atualizações em tempo real (somente se logado)
   if (obterToken()) iniciarSSE();
+
+  // Polling a cada 60s para capturar mudanças de status pelo passar do tempo
+  // (início/fim de reuniões), que o SSE não detecta pois só dispara em ações no banco
+  if (obterToken()) {
+    setInterval(() => {
+      carregarDashboard();
+      carregarLista(abaAtiva);
+    }, 60 * 1000);
+  }
 };
