@@ -12,6 +12,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { criarPaginaNotion, arquivarPaginaNotion, sincronizarTodasReservas, notionConfigurado } = require('./notion');
 
 // ── 2. CONFIGURAÇÃO ─────────────────────────────────────────
 const app = express();
@@ -419,12 +420,18 @@ app.post('/api/reservas', autenticar, (req, res) => {
     WHERE r.id = ?
   `).get(resultado.lastInsertRowid);
 
+  // Responde ao cliente antes de chamar o Notion (não bloqueia)
   res.status(201).json({
     erro: false,
     mensagem: 'Reserva criada com sucesso!',
     reserva: { ...novaReserva, statusDinamico: calcularStatusDinamico(novaReserva), euConfirmei: false }
   });
   notificarClientes();
+
+  // Envia para o Notion de forma assíncrona (falha silenciosa — não afeta o usuário)
+  // novaReserva já contém o campo 'gestor' do JOIN com a tabela usuarios
+  const statusParaNotion = calcularStatusDinamico(novaReserva);
+  criarPaginaNotion(novaReserva, [], statusParaNotion).catch(() => { });
 });
 
 // ── DELETE /api/reservas/:id ─────────────────────────────────
@@ -443,6 +450,46 @@ app.delete('/api/reservas/:id', autenticar, (req, res) => {
   db.prepare('DELETE FROM reservas WHERE id = ?').run(id);
   notificarClientes();
   res.json({ erro: false, mensagem: 'Reserva cancelada com sucesso.' });
+});
+
+// ── GET /api/notion/status ───────────────────────────────────
+// Informa ao frontend se a integração com o Notion está configurada.
+app.get('/api/notion/status', autenticar, (req, res) => {
+  res.json({ configurado: notionConfigurado() });
+});
+
+// ── POST /api/notion/sync ────────────────────────────────────
+// Somente Admin. Sincroniza todas as reservas futuras (de hoje em diante) para o Notion.
+app.post('/api/notion/sync', autenticar, apenasAdmin, async (req, res) => {
+  const dataHoje = hoje();
+
+  const reservas = db.prepare(`
+    SELECT r.*, u.nome AS gestor,
+           (SELECT GROUP_CONCAT(u2.nome, '||') FROM presencas p2
+            JOIN usuarios u2 ON u2.id = p2.usuario_id
+            WHERE p2.reserva_id = r.id) AS participantesNomes
+    FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+    WHERE r.data >= ?
+    ORDER BY r.data ASC, r.horaInicio ASC
+  `).all(dataHoje);
+
+  try {
+    // Adiciona statusDinamico calculado a cada reserva antes de enviar ao Notion
+    const reservasComStatus = reservas.map(r => ({
+      ...r,
+      statusDinamico: calcularStatusDinamico(r),
+      participantesNomes: r.participantesNomes || null
+    }));
+    const total = await sincronizarTodasReservas(reservasComStatus);
+    res.json({
+      erro: false,
+      mensagem: `${total} reserva(s) sincronizada(s) com o Notion com sucesso!`,
+      total
+    });
+  } catch (err) {
+    console.error('Erro na sincronização com Notion:', err);
+    res.status(500).json({ erro: true, mensagem: 'Erro ao sincronizar com o Notion.' });
+  }
 });
 
 // ── PATCH /api/reservas/:id/presenca ──────────────────────────

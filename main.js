@@ -302,12 +302,16 @@ function trocarAba(aba) {
   const estiloAtivo = 'tab-btn flex-1 py-3.5 px-4 text-sm font-semibold uppercase tracking-widest transition-all duration-200 text-blue-600 dark:text-canaa-cyan border-b-2 border-blue-600 dark:border-canaa-cyan bg-blue-50/50 dark:bg-canaa-cyan/5';
   const estiloInativo = 'tab-btn flex-1 py-3.5 px-4 text-sm font-semibold uppercase tracking-widest transition-all duration-200 text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:bg-slate-50 dark:hover:bg-white/5';
 
+  const cabecalho = document.getElementById('cabecalhoLista');
+
   if (aba === 'proximos') {
     btnProximos.className = estiloAtivo;
     btnHistorico.className = estiloInativo;
+    if (cabecalho) cabecalho.classList.remove('hidden');
   } else {
     btnProximos.className = estiloInativo;
     btnHistorico.className = estiloAtivo;
+    if (cabecalho) cabecalho.classList.add('hidden');
   }
 
   carregarLista(aba);
@@ -341,7 +345,9 @@ async function carregarLista(aba) {
       return;
     }
 
-    lista.innerHTML = reservas.map(r => renderCartaoReserva(r)).join('');
+    lista.innerHTML = reservas.map(r =>
+      aba === 'historico' ? renderCartaoHistorico(r) : renderCartaoReserva(r)
+    ).join('');
 
   } catch (err) {
     console.error('Erro ao carregar lista:', err);
@@ -354,6 +360,21 @@ function formatarData(iso) {
   if (!iso) return '—';
   const [ano, mes, dia] = iso.split('-');
   return `${dia}/${mes}/${ano}`;
+}
+
+/** Card compacto para o histórico — só título, data/horário e badge Concluída */
+function renderCartaoHistorico(r) {
+  const titulo = escapeHtml(r.titulo);
+  const data = formatarData(r.data);
+  return `
+    <div class="flex items-center gap-3 px-4 py-2.5 border-b border-slate-100 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/[0.02] transition-colors">
+      <div class="flex-1 min-w-0">
+        <p class="text-sm font-semibold dark:text-slate-100 truncate">${titulo}</p>
+        <p class="text-xs text-slate-400 font-mono">${data} &nbsp;${r.horaInicio}<span class="text-slate-300 dark:text-slate-600"> → </span>${r.horaFim}</p>
+      </div>
+      <span class="text-xs font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-white/5 px-2 py-0.5 rounded-full flex-shrink-0">Concluída</span>
+    </div>
+  `;
 }
 
 /** Escapa caracteres HTML para prevenir XSS */
@@ -724,4 +745,63 @@ window.onload = () => {
       carregarLista(abaAtiva);
     }, 60 * 1000);
   }
+
+  // Verifica se a integração com Notion está ativa (somente para admins)
+  const usuario = obterUsuario();
+  if (usuario?.role === 'admin') verificarStatusNotion();
 };
+
+// ------------------------------------------------------------
+// NOTION — Sincronização com banco de dados do Notion
+// ------------------------------------------------------------
+
+/** Verifica no backend se o Notion está configurado e atualiza o badge no card admin */
+async function verificarStatusNotion() {
+  const badge = document.getElementById('notionStatusBadge');
+  const btn = document.getElementById('btnSyncNotion');
+  if (!badge) return;
+
+  try {
+    const res = await fetch(`${URL_API}/notion/status`, { headers: headersAuth() });
+    if (!res.ok) throw new Error();
+    const { configurado } = await res.json();
+
+    if (configurado) {
+      badge.textContent = '● Conectado';
+      badge.className = 'ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400';
+    } else {
+      badge.textContent = '● Não configurado';
+      badge.className = 'ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400';
+      if (btn) btn.disabled = true;
+    }
+  } catch {
+    badge.textContent = '● Erro';
+    badge.className = 'ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400';
+  }
+}
+
+/** Sincroniza todas as reservas futuras com o Notion (botão no card admin) */
+async function sincronizarNotion() {
+  const btn = document.getElementById('btnSyncNotion');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sincronizando...'; }
+
+  try {
+    const res = await fetch(`${URL_API}/notion/sync`, {
+      method: 'POST',
+      headers: headersAuth()
+    });
+    if (checar401(res.status)) return;
+    const dados = await res.json();
+
+    if (res.ok) {
+      mostrarModal('sucesso', dados.mensagem, true);
+    } else {
+      mostrarModal('erro', dados.mensagem || 'Erro ao sincronizar com o Notion.');
+    }
+  } catch (err) {
+    console.error('Erro ao sincronizar com Notion:', err);
+    mostrarModal('erro', 'Erro ao conectar com o servidor.');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Sincronizar com Notion'; }
+  }
+}
