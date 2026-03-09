@@ -40,7 +40,7 @@ function montarPropriedades(reserva, participantes = [], statusDinamico = 'Agend
             title: [{ text: { content: reserva.titulo || 'Sem título' } }]
         },
 
-        // 2. Data com hora de início e hora de fim (intervalo)
+        // 2. Data com hora de início e hora de fim 
         'Data': {
             date: reserva.data ? {
                 start: reserva.horaInicio
@@ -116,7 +116,7 @@ async function atualizarPaginaNotion(notionPageId, participantes = [], statusDin
     const statusMap = {
         'Agendada': 'Agendada',
         'Em andamento': 'Em andamento',
-        'Concluída': 'Concluído', // Notion usa "Concluído" (sem acento no i)
+        'Concluída': 'Concluído',   // Notion usa "Concluído"
     };
     const statusNotion = statusMap[statusDinamico];
 

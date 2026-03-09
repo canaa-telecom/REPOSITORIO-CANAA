@@ -1,9 +1,3 @@
-// ============================================================
-// server.js — Backend do Sistema de Reserva de Sala v2.2
-// Novidades v2.2: pré-ata, participantes, conflito de agenda
-//                 por participante e RSVP (confirmação de presença)
-// ============================================================
-
 // ── 1. IMPORTAÇÕES ──────────────────────────────────────────
 require('dotenv').config();
 const express = require('express');
