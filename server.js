@@ -6,7 +6,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { criarPaginaNotion, arquivarPaginaNotion, sincronizarTodasReservas, notionConfigurado } = require('./notion');
+const { criarPaginaNotion, atualizarStatusNotion, arquivarPaginaNotion, sincronizarTodasReservas, notionConfigurado } = require('./notion');
 
 // ── 2. CONFIGURAÇÃO ─────────────────────────────────────────
 const app = express();
@@ -127,6 +127,14 @@ function migrarBanco() {
   if (!colunas.includes('participantes')) {
     db.exec('ALTER TABLE reservas ADD COLUMN participantes TEXT');
     console.log('✅ Migração: coluna participantes adicionada');
+  }
+  if (!colunas.includes('notion_page_id')) {
+    db.exec('ALTER TABLE reservas ADD COLUMN notion_page_id TEXT');
+    console.log('✅ Migração: coluna notion_page_id adicionada');
+  }
+  if (!colunas.includes('notion_status_enviado')) {
+    db.exec('ALTER TABLE reservas ADD COLUMN notion_status_enviado TEXT');
+    console.log('✅ Migração: coluna notion_status_enviado adicionada');
   }
 
   // Tabela de confirmações de presença (RSVP)
@@ -422,10 +430,14 @@ app.post('/api/reservas', autenticar, (req, res) => {
   });
   notificarClientes();
 
-  // Envia para o Notion de forma assíncrona (falha silenciosa — não afeta o usuário)
-  // novaReserva já contém o campo 'gestor' do JOIN com a tabela usuarios
+  // Envia para o Notion de forma assíncrona e salva o notion_page_id retornado
   const statusParaNotion = calcularStatusDinamico(novaReserva);
-  criarPaginaNotion(novaReserva, [], statusParaNotion).catch(() => { });
+  criarPaginaNotion(novaReserva, [], statusParaNotion).then(notionPageId => {
+    if (notionPageId) {
+      db.prepare('UPDATE reservas SET notion_page_id = ?, notion_status_enviado = ? WHERE id = ?')
+        .run(notionPageId, statusParaNotion, novaReserva.id);
+    }
+  }).catch(() => { });
 });
 
 // ── DELETE /api/reservas/:id ─────────────────────────────────
@@ -444,6 +456,11 @@ app.delete('/api/reservas/:id', autenticar, (req, res) => {
   db.prepare('DELETE FROM reservas WHERE id = ?').run(id);
   notificarClientes();
   res.json({ erro: false, mensagem: 'Reserva cancelada com sucesso.' });
+
+  // Arquiva a página no Notion de forma assíncrona (se existir)
+  if (reserva.notion_page_id) {
+    arquivarPaginaNotion(reserva.notion_page_id).catch(() => { });
+  }
 });
 
 // ── GET /api/notion/status ───────────────────────────────────
@@ -474,10 +491,20 @@ app.post('/api/notion/sync', autenticar, apenasAdmin, async (req, res) => {
       statusDinamico: calcularStatusDinamico(r),
       participantesNomes: r.participantesNomes || null
     }));
-    const total = await sincronizarTodasReservas(reservasComStatus);
+    const { criadas, atualizadas, novasIds } = await sincronizarTodasReservas(reservasComStatus);
+
+    // Salva no banco os notion_page_id das reservas recém-criadas no Notion
+    const stmtAtualizar = db.prepare(
+      'UPDATE reservas SET notion_page_id = ?, notion_status_enviado = ? WHERE id = ?'
+    );
+    for (const { id, notionPageId, status } of novasIds) {
+      stmtAtualizar.run(notionPageId, status, id);
+    }
+
+    const total = criadas + atualizadas;
     res.json({
       erro: false,
-      mensagem: `${total} reserva(s) sincronizada(s) com o Notion com sucesso!`,
+      mensagem: `Sincronização concluída: ${criadas} criada(s), ${atualizadas} atualizada(s).`,
       total
     });
   } catch (err) {
@@ -618,12 +645,61 @@ app.get('*', (req, res) => {
 });
 
 // ============================================================
+// 9. SINCRONIZAÇÃO PERIÓDICA DE STATUS COM O NOTION
+// ============================================================
+
+/**
+ * Verifica todas as reservas que possuem notion_page_id e compara o status
+ * atual (calculado dinamicamente) com o último status enviado ao Notion.
+ * Se houver diferença, atualiza a página no Notion.
+ *
+ * Roda a cada 5 minutos após a inicialização do servidor.
+ */
+async function sincronizarStatusNotion() {
+  if (!notionConfigurado()) return;
+
+  const reservas = db.prepare(`
+    SELECT * FROM reservas
+    WHERE notion_page_id IS NOT NULL
+  `).all();
+
+  if (reservas.length === 0) return;
+
+  let atualizadas = 0;
+  for (const r of reservas) {
+    const statusAtual = calcularStatusDinamico(r);
+    if (statusAtual !== r.notion_status_enviado) {
+      const ok = await atualizarStatusNotion(r.notion_page_id, statusAtual);
+      if (ok) {
+        db.prepare('UPDATE reservas SET notion_status_enviado = ? WHERE id = ?')
+          .run(statusAtual, r.id);
+        atualizadas++;
+      }
+    }
+  }
+
+  if (atualizadas > 0) {
+    console.log(`🔄 Notion: ${atualizadas} status atualizado(s) automaticamente.`);
+  }
+}
+
+// ============================================================
 // 8. INICIALIZAÇÃO
 // ============================================================
 inicializarBanco();
 
 app.listen(PORT, () => {
-  console.log(`\n✅ Servidor Canaã Telecom v2.2 rodando!`);
+  console.log(`\n✅ Servidor Canaã Telecom v2.3 rodando!`);
   console.log(`🌐 Acesse: http://localhost:${PORT}`);
   console.log(`🔑 Admin: ti@canaatelecom.com.br\n`);
+
+  // Inicia o timer de sincronização de status com o Notion (a cada 5 minutos)
+  if (notionConfigurado()) {
+    // Roda a primeira vez após 1 minuto (aguarda o servidor estabilizar)
+    setTimeout(() => {
+      sincronizarStatusNotion();
+      setInterval(sincronizarStatusNotion, 5 * 60 * 1000);
+    }, 60 * 1000);
+    console.log('🔔 Notion: sincronização automática de status ativada (a cada 5 min).');
+  }
 });

@@ -15,7 +15,19 @@ function notionConfigurado() {
 }
 
 /**
- * Colunas do banco Notion:
+ * Mapeia o status interno para o nome EXATO da opção criada no Notion.
+ *
+ * As opções devem existir no banco Notion com estes nomes exatos:
+ *   "Agendada" | "Em andamento" | "Concluído"
+ */
+const STATUS_MAP = {
+    'Agendada': 'Agendada',
+    'Em andamento': 'Em andamento',
+    'Concluída': 'Concluído',   // Notion usa "Concluído" (masculino)
+};
+
+/**
+ * Colunas do banco Notion esperadas:
  *   Titulo       → Title
  *   Data         → Date (intervalo: horaInicio → horaFim)
  *   Status       → Status nativo do Notion
@@ -25,14 +37,7 @@ function notionConfigurado() {
  */
 function montarPropriedades(reserva, participantes = [], statusDinamico = 'Agendada') {
     const nomesTexto = participantes.length > 0 ? participantes.join(', ') : '';
-
-    // Mapeia o status do sistema para os nomes REAIS das opções criadas no Notion
-    const statusMap = {
-        'Agendada': 'Agendada',
-        'Em andamento': 'Em andamento',
-        'Concluída': 'Concluído',
-    };
-    const statusNotion = statusMap[statusDinamico];
+    const statusNotion = STATUS_MAP[statusDinamico];
 
     const props = {
         // 1. Título da reunião
@@ -40,7 +45,7 @@ function montarPropriedades(reserva, participantes = [], statusDinamico = 'Agend
             title: [{ text: { content: reserva.titulo || 'Sem título' } }]
         },
 
-        // 2. Data com hora de início e hora de fim 
+        // 2. Data com hora de início e hora de fim
         'Data': {
             date: reserva.data ? {
                 start: reserva.horaInicio
@@ -68,9 +73,11 @@ function montarPropriedades(reserva, participantes = [], statusDinamico = 'Agend
         }
     };
 
-    // 3. Status — só inclui se o nome existir no Notion (evita erro de opção inválida)
+    // 3. Status — só inclui se o mapeamento existir (evita erro de opção inválida)
     if (statusNotion) {
         props['Status'] = { status: { name: statusNotion } };
+    } else {
+        console.warn(`⚠️  Notion: status desconhecido ignorado — "${statusDinamico}"`);
     }
 
     return props;
@@ -79,9 +86,10 @@ function montarPropriedades(reserva, participantes = [], statusDinamico = 'Agend
 /**
  * Cria uma nova página no banco do Notion com todos os dados da reserva.
  *
- * @param {object}   reserva       - Objeto da reserva (com gestor, horaInicio, horaFim, etc.)
- * @param {string[]} participantes - Nomes de quem confirmou presença
+ * @param {object}   reserva        - Objeto da reserva (com gestor, horaInicio, horaFim, etc.)
+ * @param {string[]} participantes  - Nomes de quem confirmou presença
  * @param {string}   statusDinamico - 'Agendada' | 'Em andamento' | 'Concluída'
+ * @returns {string|null}           - ID da página criada no Notion, ou null em caso de erro
  */
 async function criarPaginaNotion(reserva, participantes = [], statusDinamico = 'Agendada') {
     if (!notionConfigurado()) return null;
@@ -102,6 +110,37 @@ async function criarPaginaNotion(reserva, participantes = [], statusDinamico = '
 }
 
 /**
+ * Atualiza APENAS o status de uma página existente no Notion.
+ * Chamado pelo timer periódico para refletir mudanças automáticas de status.
+ *
+ * @param {string} notionPageId  - ID da página no Notion
+ * @param {string} statusDinamico - 'Agendada' | 'Em andamento' | 'Concluída'
+ */
+async function atualizarStatusNotion(notionPageId, statusDinamico) {
+    if (!notionConfigurado() || !notionPageId) return false;
+
+    const statusNotion = STATUS_MAP[statusDinamico];
+    if (!statusNotion) {
+        console.warn(`⚠️  Notion: status desconhecido ignorado — "${statusDinamico}"`);
+        return false;
+    }
+
+    try {
+        await notion.pages.update({
+            page_id: notionPageId,
+            properties: {
+                'Status': { status: { name: statusNotion } }
+            }
+        });
+        console.log(`🔄 Notion: status atualizado → página ${notionPageId} [${statusDinamico}]`);
+        return true;
+    } catch (err) {
+        console.error('❌ Notion: erro ao atualizar status:', err.message);
+        return false;
+    }
+}
+
+/**
  * Atualiza os campos de uma página existente no Notion.
  * Útil para sincronizar status e confirmados após mudanças.
  *
@@ -113,12 +152,7 @@ async function atualizarPaginaNotion(notionPageId, participantes = [], statusDin
     if (!notionConfigurado() || !notionPageId) return;
 
     const nomesTexto = participantes.length > 0 ? participantes.join(', ') : '';
-    const statusMap = {
-        'Agendada': 'Agendada',
-        'Em andamento': 'Em andamento',
-        'Concluída': 'Concluído',   // Notion usa "Concluído"
-    };
-    const statusNotion = statusMap[statusDinamico];
+    const statusNotion = STATUS_MAP[statusDinamico];
 
     try {
         await notion.pages.update({
@@ -153,27 +187,46 @@ async function arquivarPaginaNotion(notionPageId) {
 
 /**
  * Sincroniza um lote de reservas para o Notion (POST /api/notion/sync).
+ * Faz UPSERT: se a reserva já possui notion_page_id, atualiza a página existente;
+ * caso contrário, cria uma nova página e retorna o ID para ser salvo no banco.
  *
- * @param {Array} reservas - Array com objetos de reserva (incluindo gestor e participantesNomes)
+ * @param {Array} reservas - Array com objetos de reserva (notion_page_id, gestor, participantesNomes, statusDinamico)
+ * @returns {{ criadas: number, atualizadas: number, novasIds: Array<{id, notionPageId}> }}
  */
 async function sincronizarTodasReservas(reservas) {
-    if (!notionConfigurado()) return 0;
+    if (!notionConfigurado()) return { criadas: 0, atualizadas: 0, novasIds: [] };
 
     let criadas = 0;
+    let atualizadas = 0;
+    const novasIds = [];
+
     for (const r of reservas) {
         const nomes = Array.isArray(r.participantesNomes)
             ? r.participantesNomes
             : (r.participantesNomes ? r.participantesNomes.split('||') : []);
 
         const status = r.statusDinamico || 'Agendada';
-        const id = await criarPaginaNotion(r, nomes, status);
-        if (id) criadas++;
+
+        if (r.notion_page_id) {
+            // Página já existe no Notion — apenas atualiza
+            await atualizarPaginaNotion(r.notion_page_id, nomes, status);
+            atualizadas++;
+        } else {
+            // Ainda não tem página — cria uma nova
+            const notionPageId = await criarPaginaNotion(r, nomes, status);
+            if (notionPageId) {
+                criadas++;
+                novasIds.push({ id: r.id, notionPageId, status });
+            }
+        }
     }
-    return criadas;
+
+    return { criadas, atualizadas, novasIds };
 }
 
 module.exports = {
     criarPaginaNotion,
+    atualizarStatusNotion,
     atualizarPaginaNotion,
     atualizarConfirmadosNotion,
     arquivarPaginaNotion,

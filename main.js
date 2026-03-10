@@ -1,4 +1,4 @@
-
+﻿
 const URL_API = 'http://localhost:3000/api';
 
 // Aba ativa na lista de agendamentos
@@ -398,101 +398,112 @@ function renderBadgeStatus(statusDinamico) {
   }
 }
 
-/** Renderiza o HTML de um item da lista no layout compacto tipo tabela */
+/** Renderiza o HTML de um item da lista no layout compacto de linha única */
 function renderCartaoReserva(r) {
   const usuario = obterUsuario();
   const isAdmin = usuario?.role === 'admin';
-
-  // Badge de status
-  const statusBadge = {
-    'Concluída': '<span class="text-xs font-semibold text-slate-500 dark:text-slate-400">Concluída</span>',
-    'Em andamento': '<span class="text-xs font-bold text-emerald-600 dark:text-emerald-400 animate-pulse">\u25cf Ativo</span>',
-    'Agendada': '<span class="text-xs font-semibold text-blue-600 dark:text-blue-400">Agendada</span>',
-  }[r.statusDinamico] || '<span class="text-xs text-slate-400">\u2014</span>';
-
-  // Badge de modalidade
-  const tipoBadge = r.modalidade === 'online'
-    ? `<a href="${r.link_reuniao || '#'}" target="_blank" class="text-xs font-bold text-purple-600 dark:text-purple-400 hover:underline">Online</a>`
-    : '<span class="text-xs font-semibold text-slate-500 dark:text-slate-400">Presencial</span>';
-
-  const dataDDMMYYYY = formatarData(r.data);
-
-  // Título e gestor com XSS escapado
-  const titulo = escapeHtml(r.titulo);
-  const gestor = escapeHtml(r.gestor) || '—';
-
-  // Pré-Ata expansiva
-  const preAtaHtml = r.pre_ata ? `
-    <div class="mt-2 col-span-4">
-      <button onclick="togglePreAta(${r.id})" class="text-xs text-cyan-600 dark:text-cyan-500 hover:text-cyan-500 dark:hover:text-cyan-400 font-semibold flex items-center gap-1">
-        <svg id="chevron-${r.id}" class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-        Ver Pauta
-      </button>
-      <div id="preata-${r.id}" class="hidden mt-1.5 text-xs text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-white/5 rounded-lg px-3 py-2 leading-relaxed whitespace-pre-wrap">${escapeHtml(r.pre_ata)}</div>
-    </div>` : '';
-
-  // RSVP — mostra botão apenas em Próximos (Agendada ou Em andamento)
+  const criadorDaReuniao = usuario?.id === r.usuario_id;
   const podeConfirmar = r.statusDinamico === 'Agendada' || r.statusDinamico === 'Em andamento';
   const confirmados = r.confirmados ?? 0;
   const euConfirmei = r.euConfirmei;
-  const criadorDaReuniao = usuario?.id === r.usuario_id;
   const participantes = r.participantesNomes || [];
+  const titulo = escapeHtml(r.titulo);
+  const gestor = escapeHtml(r.gestor) || '—';
+  const dataDDMMYYYY = formatarData(r.data);
 
-  // Lista de nomes: visível somente para o criador da reunião
-  const listaNomesHtml = (criadorDaReuniao && participantes.length > 0) ? `
-    <div id="rsvp-nomes-${r.id}" class="col-span-4 mt-1 flex flex-wrap gap-1">
-      ${participantes.map(n => `<span class="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 font-medium">${escapeHtml(n)}</span>`).join('')}
+  // Badge de status — compacto
+  const statusBadge = {
+    'Concluída': `<span class="text-[10px] font-semibold text-slate-400 dark:text-slate-500">Concluída</span>`,
+    'Em andamento': `<span class="text-[10px] font-bold text-emerald-500 dark:text-emerald-400 animate-pulse">● Ativo</span>`,
+    'Agendada': `<span class="text-[10px] font-semibold text-blue-500 dark:text-blue-400">Agendada</span>`,
+  }[r.statusDinamico] || `<span class="text-[10px] text-slate-400">—</span>`;
+
+  // Badge de modalidade — compacto
+  const tipoBadge = r.modalidade === 'online'
+    ? `<a href="${r.link_reuniao || '#'}" target="_blank" title="Abrir link da reunião"
+         class="text-[10px] font-bold text-purple-500 dark:text-purple-400 hover:underline">Online ↗</a>`
+    : `<span class="text-[10px] text-slate-400 dark:text-slate-500">Presencial</span>`;
+
+  // Ícone de pauta — só aparece se tiver pré-ata
+  const pautaIcon = r.pre_ata ? `
+    <button onclick="togglePreAta(${r.id})" title="Ver pauta"
+      class="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded hover:bg-slate-100 dark:hover:bg-white/10 text-slate-300 dark:text-slate-600 hover:text-cyan-500 dark:hover:text-cyan-400 transition-colors">
+      <svg id="chevron-${r.id}" class="w-3.5 h-3.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+      </svg>
+    </button>` : `<span class="w-6 flex-shrink-0"></span>`;
+
+  // Pauta expansiva
+  const pautaConteudo = r.pre_ata ? `
+    <div id="preata-${r.id}" class="hidden px-3 pb-2">
+      <p class="text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 leading-relaxed whitespace-pre-wrap border border-slate-100 dark:border-white/5">${escapeHtml(r.pre_ata)}</p>
     </div>` : '';
 
-  const rsvpHtml = podeConfirmar ? `
-    <div class="col-span-4 flex items-center gap-2 mt-1.5">
-      <button id="rsvp-btn-${r.id}" onclick="confirmarPresenca(${r.id}, ${criadorDaReuniao})"
-        class="text-xs font-bold px-3 py-1 rounded-full transition-all ${euConfirmei
-      ? 'bg-emerald-100 text-emerald-700 hover:bg-red-100 hover:text-red-600 dark:bg-emerald-900/40 dark:text-emerald-300 dark:hover:bg-red-900/30 dark:hover:text-red-300'
-      : 'bg-slate-100 text-slate-600 hover:bg-emerald-100 hover:text-emerald-700 dark:bg-white/5 dark:text-slate-400 dark:hover:bg-emerald-900/30 dark:hover:text-emerald-300'
-    }">
-        ${euConfirmei ? '\u2713 Confirmado' : '\u25cb Confirmar Presen\u00e7a'}
-      </button>
-      <span id="rsvp-count-${r.id}" class="text-xs text-slate-500 dark:text-slate-500">${confirmados} confirmado${confirmados !== 1 ? 's' : ''}</span>
-    </div>
-    ${listaNomesHtml}` : (confirmados > 0 ? `
-    <div class="col-span-4 mt-1.5 flex flex-wrap items-center gap-1">
-      <span class="text-xs text-slate-500">\u2713 ${confirmados} confirmado${confirmados !== 1 ? 's' : ''}</span>
-      ${listaNomesHtml}
-    </div>` : '');
+  // RSVP — ícone + contagem inline
+  const rsvpSection = podeConfirmar ? `
+    <button id="rsvp-btn-${r.id}" onclick="confirmarPresenca(${r.id}, ${criadorDaReuniao})" title="${euConfirmei ? 'Cancelar presença' : 'Confirmar presença'}"
+      class="flex-shrink-0 flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold transition-all border
+      ${euConfirmei
+      ? 'bg-emerald-50 border-emerald-200 text-emerald-600 dark:bg-emerald-900/30 dark:border-emerald-700/40 dark:text-emerald-400 hover:bg-red-50 hover:border-red-200 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:border-red-700/40 dark:hover:text-red-400'
+      : 'bg-transparent border-slate-200 text-slate-400 dark:border-white/10 dark:text-slate-500 hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-600 dark:hover:bg-emerald-900/20 dark:hover:border-emerald-700/40 dark:hover:text-emerald-400'}">
+      <svg class="w-2.5 h-2.5" fill="${euConfirmei ? 'currentColor' : 'none'}" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+      </svg>
+      <span id="rsvp-count-${r.id}">${confirmados}</span>
+    </button>` : (confirmados > 0 ? `
+    <span class="flex-shrink-0 text-[10px] text-slate-400 dark:text-slate-500">✓ <span id="rsvp-count-${r.id}">${confirmados}</span></span>` : `<span id="rsvp-count-${r.id}" class="hidden"></span>`);
 
-  // Botão de exclusão — visível apenas para admins
-  const adminDeleteBtn = isAdmin ? `
-    <div class="col-span-4 mt-1.5">
-      <button onclick="cancelarReserva(${r.id}, '${escapeHtml(r.titulo).replace(/'/g, '&#39;')}')" 
-        class="text-xs font-semibold text-red-500 dark:text-red-400 hover:text-red-600 dark:hover:text-red-300 flex items-center gap-1 transition-colors">
-        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-        </svg>
-        Apagar reunião
-      </button>
-    </div>` : '';
+  // Nomes dos participantes — só para o criador, em linha discreta abaixo
+  const nomesHtml = (criadorDaReuniao && participantes.length > 0) ? `
+    <div id="rsvp-nomes-${r.id}" class="flex flex-wrap gap-1 px-3 pb-1.5">
+      ${participantes.map(n => `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 font-medium">${escapeHtml(n)}</span>`).join('')}
+    </div>` : `<div id="rsvp-nomes-${r.id}"></div>`;
+
+  // Botão de exclusão — ícone pequeno, só para admin
+  const deleteBtn = isAdmin ? `
+    <button onclick="cancelarReserva(${r.id}, '${escapeHtml(r.titulo).replace(/'/g, '&#39;')}')" title="Apagar reunião"
+      class="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+      </svg>
+    </button>` : '';
 
   return `
-    <div id="card-reserva-${r.id}" class="px-4 py-3 border-b border-slate-100 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/[0.03] transition-colors">
-      <div class="grid grid-cols-[80px_1fr_90px_80px] gap-2 items-start">
-        <div class="leading-tight">
-          <p class="text-xs text-slate-500 dark:text-slate-400 font-mono">${dataDDMMYYYY}</p>
-          <p class="text-sm font-bold text-blue-600 dark:text-canaa-cyan">${r.horaInicio}<span class="text-slate-400 font-normal text-xs">→${r.horaFim}</span></p>
+    <div id="card-reserva-${r.id}" class="border-b border-slate-100 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/[0.02] transition-colors">
+      <div class="flex items-center gap-2 px-3 py-2">
+
+        <!-- Horário -->
+        <div class="flex-shrink-0 w-[68px]">
+          <p class="text-[10px] text-slate-400 font-mono leading-none">${dataDDMMYYYY}</p>
+          <p class="text-xs font-bold text-blue-600 dark:text-canaa-cyan leading-snug mt-0.5">${r.horaInicio}<span class="text-slate-400 dark:text-slate-500 font-normal text-[10px]">→${r.horaFim}</span></p>
         </div>
-        <div class="min-w-0">
-          <p class="text-sm font-semibold dark:text-slate-100 truncate">${titulo}</p>
-          <p class="text-xs text-slate-400 truncate">${gestor}</p>
+
+        <!-- Título + gestor -->
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate leading-snug">${titulo}</p>
+          <p class="text-[10px] text-slate-400 dark:text-slate-500 truncate">${gestor}</p>
         </div>
-        <div class="text-center pt-0.5">${statusBadge}</div>
-        <div class="text-center pt-0.5">${tipoBadge}</div>
-        ${preAtaHtml}
-        ${rsvpHtml}
-        ${adminDeleteBtn}
+
+        <!-- Status + Tipo -->
+        <div class="flex-shrink-0 flex flex-col items-end gap-0.5 min-w-[58px] text-right">
+          ${statusBadge}
+          ${tipoBadge}
+        </div>
+
+        <!-- Ações: pauta + rsvp + delete -->
+        <div class="flex-shrink-0 flex items-center gap-0.5 ml-1">
+          ${pautaIcon}
+          ${rsvpSection}
+          ${deleteBtn}
+        </div>
+
       </div>
+      ${pautaConteudo}
+      ${nomesHtml}
     </div>
   `;
 }
+
 
 /** Expande/recolhe a pré-ata de um card */
 function togglePreAta(id) {
@@ -516,56 +527,54 @@ async function confirmarPresenca(reservaId, criador = false) {
     // Atualiza o botão e o contador inline, sem recarregar a lista
     const btn = document.getElementById(`rsvp-btn-${reservaId}`);
     const count = document.getElementById(`rsvp-count-${reservaId}`);
-    if (!btn || !count) return;
 
-    if (dados.confirmou) {
-      btn.className = btn.className.replace('bg-white/5 text-slate-400 hover:bg-emerald-900/30 hover:text-emerald-300',
-        'bg-emerald-900/40 text-emerald-300 hover:bg-red-900/30 hover:text-red-300');
-      btn.textContent = '\u2713 Confirmado';
-    } else {
-      btn.className = btn.className.replace('bg-emerald-900/40 text-emerald-300 hover:bg-red-900/30 hover:text-red-300',
-        'bg-white/5 text-slate-400 hover:bg-emerald-900/30 hover:text-emerald-300');
-      btn.textContent = '\u25cb Confirmar Presen\u00e7a';
+    if (btn) {
+      // Classes para estado confirmado
+      const clsOn = 'bg-emerald-50 border-emerald-200 text-emerald-600 dark:bg-emerald-900/30 dark:border-emerald-700/40 dark:text-emerald-400 hover:bg-red-50 hover:border-red-200 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:border-red-700/40 dark:hover:text-red-400';
+      const clsOff = 'bg-transparent border-slate-200 text-slate-400 dark:border-white/10 dark:text-slate-500 hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-600 dark:hover:bg-emerald-900/20 dark:hover:border-emerald-700/40 dark:hover:text-emerald-400';
+
+      // Remove ambos os conjuntos de classes e aplica o novo estado
+      btn.classList.remove(...clsOn.split(' '), ...clsOff.split(' '));
+      btn.classList.add(...(dados.confirmou ? clsOn : clsOff).split(' '));
+
+      // Atualiza o título (tooltip) do botão
+      btn.title = dados.confirmou ? 'Cancelar presença' : 'Confirmar presença';
+
+      // Atualiza o fill do SVG dentro do botão
+      const svg = btn.querySelector('svg');
+      if (svg) svg.setAttribute('fill', dados.confirmou ? 'currentColor' : 'none');
     }
-    const n = dados.confirmados;
-    count.textContent = `${n} confirmado${n !== 1 ? 's' : ''}`;
+
+    // Atualiza contagem
+    if (count) count.textContent = dados.confirmados;
 
     // Atualiza a lista de nomes inline (visível somente para o criador)
     if (criador && usuario) {
       let nomesDiv = document.getElementById(`rsvp-nomes-${reservaId}`);
 
       if (dados.confirmou) {
-        // Adiciona chip com o nome do usuário logado
-        if (!nomesDiv) {
-          // Cria o container se ainda não existe
-          nomesDiv = document.createElement('div');
-          nomesDiv.id = `rsvp-nomes-${reservaId}`;
-          nomesDiv.className = 'col-span-4 mt-1 flex flex-wrap gap-1';
-          // Insere após o container do botão
-          btn.closest('.col-span-4')?.after(nomesDiv);
-        }
-        // Evita duplicação: remove chip anterior do mesmo usuário se existir
-        const chipExistente = nomesDiv.querySelector(`[data-uid="${usuario.id}"]`);
-        if (!chipExistente) {
-          const chip = document.createElement('span');
-          chip.dataset.uid = usuario.id;
-          chip.className = 'text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 font-medium';
-          chip.textContent = escapeHtml(usuario.nome);
-          nomesDiv.appendChild(chip);
+        if (nomesDiv) {
+          // Evita duplicação: remove chip anterior do mesmo usuário se existir
+          const chipExistente = nomesDiv.querySelector(`[data-uid="${usuario.id}"]`);
+          if (!chipExistente) {
+            const chip = document.createElement('span');
+            chip.dataset.uid = usuario.id;
+            chip.className = 'text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 font-medium';
+            chip.textContent = escapeHtml(usuario.nome);
+            nomesDiv.appendChild(chip);
+          }
         }
       } else {
         // Remove o chip do usuário logado
         if (nomesDiv) {
           const chip = nomesDiv.querySelector(`[data-uid="${usuario.id}"]`);
           chip?.remove();
-          // Se não sobrou nenhum chip, remove o container
-          if (nomesDiv.children.length === 0) nomesDiv.remove();
         }
       }
     }
 
   } catch (err) {
-    console.error('Erro ao confirmar presen\u00e7a:', err);
+    console.error('Erro ao confirmar presença:', err);
   }
 }
 
