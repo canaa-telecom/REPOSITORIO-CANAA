@@ -1,4 +1,4 @@
-﻿
+
 const URL_API = 'http://localhost:3000/api';
 
 // Aba ativa na lista de agendamentos
@@ -240,10 +240,39 @@ async function carregarDashboard() {
       bannerDot.className = 'w-2 h-2 rounded-full bg-red-400 status-dot-red flex-shrink-0';
     }
 
-    // Atualiza o título da aba dinamicamente
-    document.title = status.salaLivre
-      ? '🟢 SALA LIVRE — Canaã Telecom'
-      : `🔴 OCUPADA: ${status.reservaAtiva?.titulo || 'Em uso'} — Canaã Telecom`;
+    // ── BANNER REUNIÃO ONLINE ─────────────────────────────────
+    const bannerOnline = document.getElementById('bannerOnline');
+    if (bannerOnline) {
+      const online = status.reuniaoOnlineAtiva;
+      if (online) {
+        bannerOnline.classList.remove('hidden');
+        document.getElementById('bannerOnlineTitulo').textContent = online.titulo;
+        document.getElementById('bannerOnlineGestor').textContent = `por ${online.gestor}`;
+        document.getElementById('bannerOnlineHorarioTexto').textContent = `${online.horaInicio} → ${online.horaFim}`;
+        const linkEl = document.getElementById('bannerOnlineLink');
+        if (online.link_reuniao) {
+          linkEl.href = online.link_reuniao;
+          linkEl.style.opacity = '1';
+          linkEl.style.pointerEvents = 'auto';
+        } else {
+          linkEl.href = '#';
+          linkEl.style.opacity = '0.4';
+          linkEl.style.pointerEvents = 'none';
+        }
+      } else {
+        bannerOnline.classList.add('hidden');
+      }
+    }
+
+    // ── Título da aba ─────────────────────────────────────────
+    const online = status.reuniaoOnlineAtiva;
+    if (!status.salaLivre) {
+      document.title = `🔴 OCUPADA: ${status.reservaAtiva?.titulo || 'Em uso'} — Canaã Telecom`;
+    } else if (online) {
+      document.title = `🟣 ONLINE: ${online.titulo} — Canaã Telecom`;
+    } else {
+      document.title = '🟢 SALA LIVRE — Canaã Telecom';
+    }
 
     const relogio = document.getElementById('relogioAoVivo');
     if (relogio) relogio.textContent = `🕐 ${status.horaAtual}`;
@@ -270,10 +299,12 @@ async function carregarDashboard() {
       labelStatus.className = 'text-[10px] font-bold uppercase tracking-widest text-slate-400';
     }
 
-    // Card reunião ativa
+    // Card reunião ativa — prioriza presencial sobre online
     const cardTitulo = document.getElementById('cardReuniaoTitulo');
     if (status.reservaAtiva) {
       cardTitulo.textContent = status.reservaAtiva.titulo;
+    } else if (status.reuniaoOnlineAtiva) {
+      cardTitulo.textContent = `🟣 ${status.reuniaoOnlineAtiva.titulo}`;
     } else if (status.proximaReuniao) {
       cardTitulo.textContent = `Próx: ${status.proximaReuniao.horaInicio}`;
     } else {

@@ -93,6 +93,64 @@
     <span id="bannerDetalhe" class="text-emerald-500/70">Nenhuma reunião presencial em andamento</span>
   </div>
 
+  <!-- ── BANNER REUNIÃO ONLINE ─────────────────────────────── -->
+  <div id="bannerOnline"
+    class="hidden relative overflow-hidden px-4 sm:px-6 py-3 border-b border-violet-500/30"
+    style="background: linear-gradient(135deg, rgba(109,40,217,0.18) 0%, rgba(139,92,246,0.10) 50%, rgba(6,182,212,0.08) 100%);">
+
+    <!-- Brilho animado de fundo -->
+    <div class="absolute inset-0 pointer-events-none" style="background: radial-gradient(ellipse 60% 80% at 10% 50%, rgba(139,92,246,0.15) 0%, transparent 70%);"></div>
+    <div id="bannerOnlinePulse" class="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-violet-400 via-purple-500 to-cyan-400"
+      style="animation: pulse 2s ease-in-out infinite;"></div>
+
+    <div class="relative flex items-center gap-3 sm:gap-4">
+
+      <!-- Ícone câmera com pulse -->
+      <div class="flex-shrink-0 relative">
+        <div class="absolute inset-0 rounded-full bg-violet-500/30 animate-ping"></div>
+        <div class="relative w-9 h-9 rounded-full flex items-center justify-center"
+          style="background: linear-gradient(135deg, #7c3aed, #06b6d4);">
+          <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M15 10l4.553-2.069A1 1 0 0121 8.869v6.262a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+          </svg>
+        </div>
+      </div>
+
+      <!-- Texto -->
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-[10px] font-black uppercase tracking-[0.2em] text-violet-300">● EM ANDAMENTO</span>
+          <span class="text-[10px] text-violet-500/60 hidden sm:inline">·</span>
+          <span class="text-[10px] text-violet-400/60 hidden sm:inline">Reunião Online</span>
+        </div>
+        <p id="bannerOnlineTitulo"
+          class="text-sm font-display font-bold text-white truncate leading-snug mt-0.5 max-w-xs sm:max-w-md"></p>
+        <p id="bannerOnlineGestor"
+          class="text-[10px] text-violet-300/60 truncate"></p>
+      </div>
+
+      <!-- Horário -->
+      <div id="bannerOnlineHorario"
+        class="hidden sm:flex flex-col items-center flex-shrink-0 px-3 py-1.5 rounded-lg border border-violet-500/25 bg-violet-500/10">
+        <span class="text-[9px] font-bold uppercase tracking-widest text-violet-400/70">Horário</span>
+        <span id="bannerOnlineHorarioTexto" class="text-xs font-mono font-bold text-violet-200"></span>
+      </div>
+
+      <!-- Botão Entrar -->
+      <a id="bannerOnlineLink" href="#" target="_blank"
+        class="flex-shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-lg font-bold text-xs text-white transition-all duration-200 shadow-lg"
+        style="background: linear-gradient(135deg, #7c3aed, #06b6d4); box-shadow: 0 0 16px rgba(139,92,246,0.45);">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+            d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+        </svg>
+        Entrar na Reunião
+      </a>
+
+    </div>
+  </div>
+
   <!-- ── CONTEÚDO PRINCIPAL ─────────────────────────────────── -->
   <main class="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-4 space-y-4">
 

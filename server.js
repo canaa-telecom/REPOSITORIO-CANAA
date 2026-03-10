@@ -6,7 +6,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { criarPaginaNotion, atualizarStatusNotion, arquivarPaginaNotion, sincronizarTodasReservas, notionConfigurado } = require('./notion');
+const { criarPaginaNotion, atualizarStatusNotion, atualizarPaginaNotion, arquivarPaginaNotion, sincronizarTodasReservas, notionConfigurado } = require('./notion');
 
 // ── 2. CONFIGURAÇÃO ─────────────────────────────────────────
 const app = express();
@@ -299,6 +299,14 @@ app.get('/api/status', (req, res) => {
       AND r.horaInicio <= ? AND r.horaFim > ?
   `).get(dataHoje, agora, agora);
 
+  // Reunião online ativa agora
+  const reuniaoOnlineAtiva = db.prepare(`
+    SELECT r.*, u.nome AS gestor
+    FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+    WHERE r.data = ? AND r.status = 'confirmada' AND r.modalidade = 'online'
+      AND r.horaInicio <= ? AND r.horaFim > ?
+  `).get(dataHoje, agora, agora);
+
   // Próxima reunião confirmada de hoje (qualquer modalidade)
   const proximaReuniao = db.prepare(`
     SELECT r.*, u.nome AS gestor
@@ -318,6 +326,7 @@ app.get('/api/status', (req, res) => {
   res.json({
     salaLivre: !reservaAtiva,
     reservaAtiva: reservaAtiva || null,
+    reuniaoOnlineAtiva: reuniaoOnlineAtiva || null,
     proximaReuniao: proximaReuniao || null,
     reunioesHoje,
     pendentes,
@@ -542,6 +551,20 @@ app.patch('/api/reservas/:id/presenca', autenticar, (req, res) => {
     confirmados
   });
   notificarClientes();
+
+  // Atualiza o campo "Confirmados" no Notion de forma assíncrona
+  const reservaCompleta = db.prepare('SELECT * FROM reservas WHERE id = ?').get(reservaId);
+  if (reservaCompleta?.notion_page_id) {
+    const nomes = db.prepare(`
+      SELECT u.nome FROM presencas p
+      JOIN usuarios u ON u.id = p.usuario_id
+      WHERE p.reserva_id = ?
+    `).all(reservaId).map(r => r.nome);
+
+    const statusAtual = calcularStatusDinamico(reservaCompleta);
+    atualizarPaginaNotion(reservaCompleta.notion_page_id, nomes, statusAtual)
+      .catch(err => console.error('Notion: erro ao atualizar confirmados:', err.message));
+  }
 });
 
 // ── GET /api/historico ─────────────────────────────────────────
