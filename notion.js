@@ -27,6 +27,20 @@ const STATUS_MAP = {
 };
 
 /**
+ * Retorna o offset do fuso horário local no formato ±HH:MM.
+ * Ex.: Brasil UTC-3 → "-03:00"
+ * Necessário para o Notion não interpretar os horários como UTC.
+ */
+function tzOffset() {
+    const off = -new Date().getTimezoneOffset(); // minutos, positivo p/ UTC+
+    const sign = off >= 0 ? '+' : '-';
+    const abs = Math.abs(off);
+    const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+    const mm = String(abs % 60).padStart(2, '0');
+    return `${sign}${hh}:${mm}`;
+}
+
+/**
  * Colunas do banco Notion esperadas:
  *   Titulo       → Title
  *   Data         → Date (intervalo: horaInicio → horaFim)
@@ -45,14 +59,14 @@ function montarPropriedades(reserva, participantes = [], statusDinamico = 'Agend
             title: [{ text: { content: reserva.titulo || 'Sem título' } }]
         },
 
-        // 2. Data com hora de início e hora de fim
+        // 2. Data com hora de início e hora de fim (com fuso horário local)
         'Data': {
             date: reserva.data ? {
                 start: reserva.horaInicio
-                    ? `${reserva.data}T${reserva.horaInicio}:00`
+                    ? `${reserva.data}T${reserva.horaInicio}:00${tzOffset()}`
                     : reserva.data,
                 end: reserva.horaFim
-                    ? `${reserva.data}T${reserva.horaFim}:00`
+                    ? `${reserva.data}T${reserva.horaFim}:00${tzOffset()}`
                     : null
             } : null
         },
