@@ -394,12 +394,12 @@ app.post('/api/reservas', autenticar, (req, res) => {
     return res.status(400).json({ erro: true, mensagem: 'A pré-ata não pode ultrapassar 600 caracteres.' });
   }
 
-  // Validação 4: hora início antes de hora fim
+  // Validação 5: hora início antes de hora fim
   if (horaParaMinutos(horaInicio) >= horaParaMinutos(horaFim)) {
     return res.status(400).json({ erro: true, mensagem: 'A hora de início deve ser anterior ao término.' });
   }
 
-  // Validação 5: conflito de sala apenas com reuniões PRESENCIAIS confirmadas
+  // Validação 6: conflito de sala apenas com reuniões PRESENCIAIS confirmadas
   if (modalidade === 'presencial') {
     const reservasDaData = db.prepare(`
       SELECT * FROM reservas

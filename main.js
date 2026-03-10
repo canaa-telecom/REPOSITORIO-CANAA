@@ -288,7 +288,6 @@ async function carregarDashboard() {
     }
 
     // ── Título da aba ─────────────────────────────────────────
-    const online = status.reuniaoOnlineAtiva;
     if (!status.salaLivre) {
       document.title = `🔴 OCUPADA: ${status.reservaAtiva?.titulo || 'Em uso'} — Canaã Telecom`;
     } else if (online) {
