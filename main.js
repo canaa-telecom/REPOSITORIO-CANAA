@@ -159,6 +159,23 @@ function alternarModalidade() {
   document.getElementById('boxLink').classList.toggle('hidden', modalidade !== 'online');
 }
 
+/** Atualiza o contador de caracteres da pré-ata */
+function atualizarContadorPreAta(el) {
+  const max = parseInt(el.maxLength) || 600;
+  const usado = el.value.length;
+  const restante = max - usado;
+  const contador = document.getElementById('contadorPreAta');
+  if (!contador) return;
+  contador.textContent = `${usado} / ${max}`;
+  if (restante <= 50) {
+    contador.className = 'text-[10px] font-mono text-red-400 transition-colors font-bold';
+  } else if (restante <= 150) {
+    contador.className = 'text-[10px] font-mono text-yellow-400 transition-colors';
+  } else {
+    contador.className = 'text-[10px] font-mono text-slate-400 transition-colors';
+  }
+}
+
 // ------------------------------------------------------------
 // 6. ENVIAR NOVA RESERVA
 // ------------------------------------------------------------
@@ -200,6 +217,12 @@ async function agendarReuniao(event) {
       mostrarModal('sucesso', resultado.mensagem, true);
       document.getElementById('formReserva').reset();
       document.getElementById('boxLink').classList.add('hidden');
+      // Reseta o contador da pré-ata
+      const contador = document.getElementById('contadorPreAta');
+      if (contador) {
+        contador.textContent = '0 / 600';
+        contador.className = 'text-[10px] font-mono text-slate-400 transition-colors';
+      }
       carregarDashboard();
       carregarLista(abaAtiva);
       carregarAnalytics();

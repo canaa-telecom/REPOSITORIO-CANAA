@@ -222,7 +222,12 @@
 
 
           <textarea id="inputPreAta" rows="3" placeholder="Pré-Ata / Pauta da Reunião (opcional)"
+            maxlength="600"
+            oninput="atualizarContadorPreAta(this)"
             class="input-compact w-full resize-none"></textarea>
+          <div class="flex justify-end">
+            <span id="contadorPreAta" class="text-[10px] font-mono text-slate-400 transition-colors">0 / 600</span>
+          </div>
 
           <button type="submit"
             class="btn-agendar w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-widest bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600 text-white shadow-md dark:shadow-[0_0_12px_rgba(6,182,212,0.35)] transition-all duration-200">

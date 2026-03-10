@@ -389,6 +389,11 @@ app.post('/api/reservas', autenticar, (req, res) => {
     return res.status(400).json({ erro: true, mensagem: 'Reuniões online exigem um link de acesso.' });
   }
 
+  // Validação 4: pré-ata não pode exceder 600 caracteres
+  if (pre_ata && pre_ata.length > 600) {
+    return res.status(400).json({ erro: true, mensagem: 'A pré-ata não pode ultrapassar 600 caracteres.' });
+  }
+
   // Validação 4: hora início antes de hora fim
   if (horaParaMinutos(horaInicio) >= horaParaMinutos(horaFim)) {
     return res.status(400).json({ erro: true, mensagem: 'A hora de início deve ser anterior ao término.' });
