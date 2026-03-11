@@ -1,5 +1,5 @@
 
-const URL_API = 'http://localhost:3000/api';
+const URL_API = `${window.location.origin}/api`;
 
 // Aba ativa na lista de agendamentos
 let abaAtiva = 'proximos';
@@ -415,17 +415,29 @@ function formatarData(iso) {
   return `${dia}/${mes}/${ano}`;
 }
 
-/** Card compacto para o histórico — só título, data/horário e badge Concluída */
+/** Card compacto para o histórico — título, data/horário e badge de status real */
 function renderCartaoHistorico(r) {
   const titulo = escapeHtml(r.titulo);
   const data = formatarData(r.data);
+  const badgesHistorico = {
+    'Concluída': '<span class="text-xs font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-white/5 px-2 py-0.5 rounded-full flex-shrink-0">Concluída</span>',
+    'Cancelada': '<span class="text-xs font-semibold text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded-full flex-shrink-0 line-through">Cancelada</span>',
+    'Em andamento': '<span class="text-xs font-semibold text-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-full flex-shrink-0">Em andamento</span>',
+    'Agendada': '<span class="text-xs font-semibold text-blue-500 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-full flex-shrink-0">Agendada</span>',
+  };
+  const badge = badgesHistorico[r.statusDinamico] || badgesHistorico['Concluída'];
+  const motivoHtml = (r.statusDinamico === 'Cancelada' && r.motivo_cancelamento) ? `
+    <p class="text-[10px] text-red-400/70 italic px-4 pb-1.5 leading-relaxed">Motivo: ${escapeHtml(r.motivo_cancelamento)}</p>` : '';
   return `
-    <div class="flex items-center gap-3 px-4 py-2.5 border-b border-slate-100 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/[0.02] transition-colors">
-      <div class="flex-1 min-w-0">
-        <p class="text-sm font-semibold dark:text-slate-100 truncate">${titulo}</p>
-        <p class="text-xs text-slate-400 font-mono">${data} &nbsp;${r.horaInicio}<span class="text-slate-300 dark:text-slate-600"> → </span>${r.horaFim}</p>
+    <div class="border-b border-slate-100 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/[0.02] transition-colors">
+      <div class="flex items-center gap-3 px-4 py-2.5">
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-semibold dark:text-slate-100 truncate ${r.statusDinamico === 'Cancelada' ? 'line-through opacity-60' : ''}">${titulo}</p>
+          <p class="text-xs text-slate-400 font-mono">${data} &nbsp;${r.horaInicio}<span class="text-slate-300 dark:text-slate-600"> → </span>${r.horaFim}</p>
+        </div>
+        ${badge}
       </div>
-      <span class="text-xs font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-white/5 px-2 py-0.5 rounded-full flex-shrink-0">Concluída</span>
+      ${motivoHtml}
     </div>
   `;
 }
@@ -447,6 +459,7 @@ function renderBadgeStatus(statusDinamico) {
     case 'Concluída': return '<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300">Concluída</span>';
     case 'Em andamento': return '<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300 animate-pulse">● Em andamento</span>';
     case 'Agendada': return '<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">Agendada</span>';
+    case 'Cancelada': return '<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-500 dark:bg-red-900/30 dark:text-red-400 line-through">Cancelada</span>';
     default: return '<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">Pendente</span>';
   }
 }
@@ -469,6 +482,7 @@ function renderCartaoReserva(r) {
     'Concluída': `<span class="text-[10px] font-semibold text-slate-400 dark:text-slate-500">Concluída</span>`,
     'Em andamento': `<span class="text-[10px] font-bold text-emerald-500 dark:text-emerald-400 animate-pulse">● Ativo</span>`,
     'Agendada': `<span class="text-[10px] font-semibold text-blue-500 dark:text-blue-400">Agendada</span>`,
+    'Cancelada': `<span class="text-[10px] font-semibold text-red-400 dark:text-red-400 line-through">Cancelada</span>`,
   }[r.statusDinamico] || `<span class="text-[10px] text-slate-400">—</span>`;
 
   // Badge de modalidade — compacto
@@ -512,6 +526,23 @@ function renderCartaoReserva(r) {
       ${participantes.map(n => `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 font-medium">${escapeHtml(n)}</span>`).join('')}
     </div>` : `<div id="rsvp-nomes-${r.id}"></div>`;
 
+  // Botão de cancelar — somente o criador, só quando a reunião ainda pode ser cancelada
+  const podeCancelar = criadorDaReuniao &&
+    (r.statusDinamico === 'Agendada' || r.statusDinamico === 'Em andamento');
+  const cancelBtn = podeCancelar ? `
+    <button onclick="solicitarCancelamento(${r.id}, '${escapeHtml(r.titulo).replace(/'/g, '&#39;')}')" title="Cancelar reunião"
+      class="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-slate-300 dark:text-slate-600 hover:text-orange-500 dark:hover:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-colors">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+      </svg>
+    </button>` : '';
+
+  // Motivo de cancelamento (expansivo)
+  const motivoHtml = (r.statusDinamico === 'Cancelada' && r.motivo_cancelamento) ? `
+    <div class="px-3 pb-2">
+      <p class="text-[10px] text-red-400/80 italic bg-red-50 dark:bg-red-900/10 rounded px-2 py-1 border border-red-100 dark:border-red-900/30">Motivo: ${escapeHtml(r.motivo_cancelamento)}</p>
+    </div>` : '';
+
   // Botão de exclusão — ícone pequeno, só para admin
   const deleteBtn = isAdmin ? `
     <button onclick="cancelarReserva(${r.id}, '${escapeHtml(r.titulo).replace(/'/g, '&#39;')}')" title="Apagar reunião"
@@ -522,7 +553,7 @@ function renderCartaoReserva(r) {
     </button>` : '';
 
   return `
-    <div id="card-reserva-${r.id}" class="border-b border-slate-100 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/[0.02] transition-colors">
+    <div id="card-reserva-${r.id}" class="border-b border-slate-100 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/[0.02] transition-colors${r.statusDinamico === 'Cancelada' ? ' opacity-60' : ''}">
       <div class="flex items-center gap-2 px-3 py-2">
 
         <!-- Horário -->
@@ -533,7 +564,7 @@ function renderCartaoReserva(r) {
 
         <!-- Título + gestor -->
         <div class="flex-1 min-w-0">
-          <p class="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate leading-snug">${titulo}</p>
+          <p class="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate leading-snug${r.statusDinamico === 'Cancelada' ? ' line-through' : ''}">${titulo}</p>
           <p class="text-[10px] text-slate-400 dark:text-slate-500 truncate">${gestor}</p>
         </div>
 
@@ -543,16 +574,18 @@ function renderCartaoReserva(r) {
           ${tipoBadge}
         </div>
 
-        <!-- Ações: pauta + rsvp + delete -->
+        <!-- Ações: pauta + rsvp + cancelar + delete -->
         <div class="flex-shrink-0 flex items-center gap-0.5 ml-1">
           ${pautaIcon}
           ${rsvpSection}
+          ${cancelBtn}
           ${deleteBtn}
         </div>
 
       </div>
       ${pautaConteudo}
       ${nomesHtml}
+      ${motivoHtml}
     </div>
   `;
 }
@@ -565,6 +598,86 @@ function togglePreAta(id) {
   box.classList.toggle('hidden');
   chevron.style.transform = box.classList.contains('hidden') ? '' : 'rotate(90deg)';
 }
+
+// ------------------------------------------------------------
+// CANCELAR REUNIÃO (somente o criador)
+// ------------------------------------------------------------
+
+/** Abre o modal de confirmação com campo de motivo para cancelar uma reunião */
+function solicitarCancelamento(id, titulo) {
+  mostrarModal('aviso', `Cancelar a reunião "${titulo}"?`);
+
+  // Limpa botões anteriores
+  document.getElementById('adminConfirmarBtn')?.remove();
+  document.getElementById('adminCancelarBtn')?.remove();
+  document.getElementById('cancelMotivoPainel')?.remove();
+
+  const barWrap = document.getElementById('modalBarWrap');
+  const modalCard = document.getElementById('modalCard');
+
+  // Textarea de motivo
+  const motivoPainel = document.createElement('div');
+  motivoPainel.id = 'cancelMotivoPainel';
+  motivoPainel.className = 'mt-3';
+  motivoPainel.innerHTML = `
+    <textarea id="cancelMotivoTexto" rows="2" maxlength="300" placeholder="Motivo do cancelamento (opcional)"
+      class="w-full text-xs rounded-lg bg-white/5 border border-white/10 text-slate-300 placeholder-slate-500 px-3 py-2 resize-none focus:outline-none focus:border-orange-400 transition-colors"></textarea>
+    <p class="text-[10px] text-slate-500 mt-0.5 text-right">Máx. 300 caracteres</p>
+  `;
+
+  // Botões
+  const botoesDiv = document.createElement('div');
+  botoesDiv.className = 'flex gap-2 mt-3 justify-end';
+
+  const btnNao = document.createElement('button');
+  btnNao.id = 'adminCancelarBtn';
+  btnNao.textContent = 'Não';
+  btnNao.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-all';
+  btnNao.onclick = () => { motivoPainel.remove(); botoesDiv.remove(); fecharModal(); };
+
+  const btnSim = document.createElement('button');
+  btnSim.id = 'adminConfirmarBtn';
+  btnSim.textContent = 'Sim, cancelar';
+  btnSim.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-orange-500 hover:bg-orange-600 text-white transition-all';
+  btnSim.onclick = () => {
+    const motivo = document.getElementById('cancelMotivoTexto')?.value.trim() || '';
+    motivoPainel.remove();
+    botoesDiv.remove();
+    fecharModal();
+    executarCancelamento(id, motivo);
+  };
+
+  botoesDiv.appendChild(btnNao);
+  botoesDiv.appendChild(btnSim);
+  barWrap ? modalCard.insertBefore(motivoPainel, barWrap) : modalCard.appendChild(motivoPainel);
+  barWrap ? modalCard.insertBefore(botoesDiv, barWrap) : modalCard.appendChild(botoesDiv);
+}
+
+/** Chama a API para cancelar a reunião e atualiza o card inline */
+async function executarCancelamento(id, motivo) {
+  try {
+    const res = await fetch(`${URL_API}/reservas/${id}/cancelar`, {
+      method: 'PATCH',
+      headers: headersAuth(),
+      body: JSON.stringify({ motivo })
+    });
+    if (checar401(res.status)) return;
+    const dados = await res.json();
+
+    if (res.ok) {
+      mostrarModal('sucesso', dados.mensagem, true);
+      carregarDashboard();
+      carregarLista(abaAtiva);
+      carregarAnalytics();
+    } else {
+      mostrarModal('erro', dados.mensagem || 'Erro ao cancelar a reunião.');
+    }
+  } catch (err) {
+    console.error('Erro ao cancelar reunião:', err);
+    mostrarModal('erro', 'Erro ao conectar com o servidor.');
+  }
+}
+
 
 /** Toggle de RSVP via PATCH /api/reservas/:id/presenca */
 async function confirmarPresenca(reservaId, criador = false) {

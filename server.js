@@ -6,7 +6,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { criarPaginaNotion, atualizarStatusNotion, atualizarPaginaNotion, arquivarPaginaNotion, sincronizarTodasReservas, notionConfigurado } = require('./notion');
+const { criarPaginaNotion, atualizarStatusNotion, atualizarPaginaNotion, cancelarPaginaNotion, arquivarPaginaNotion, sincronizarTodasReservas, notionConfigurado } = require('./notion');
 
 // ── 2. CONFIGURAÇÃO ─────────────────────────────────────────
 const app = express();
@@ -18,13 +18,7 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
-// CORS: configure CORS_ORIGIN no .env para acessos por IP ou hostname de rede interna.
-// Ex.: CORS_ORIGIN=http://192.168.1.100:3000
-const corsOptions = {
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
-  optionsSuccessStatus: 200
-};
-app.use(cors(corsOptions));
+app.use(cors()); // Aceita qualquer origem — seguro para rede interna
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
@@ -62,15 +56,20 @@ function inicializarBanco() {
   // Tabela de reservas
   db.exec(`
     CREATE TABLE IF NOT EXISTS reservas (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      usuario_id   INTEGER NOT NULL,
-      titulo       TEXT    NOT NULL,
-      data         TEXT    NOT NULL,
-      horaInicio   TEXT    NOT NULL,
-      horaFim      TEXT    NOT NULL,
-      status       TEXT    NOT NULL DEFAULT 'confirmada' CHECK(status IN ('confirmada', 'pendente')),
-      modalidade   TEXT    NOT NULL DEFAULT 'presencial' CHECK(modalidade IN ('presencial', 'online')),
-      link_reuniao TEXT,
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      usuario_id            INTEGER NOT NULL,
+      titulo                TEXT    NOT NULL,
+      data                  TEXT    NOT NULL,
+      horaInicio            TEXT    NOT NULL,
+      horaFim               TEXT    NOT NULL,
+      status                TEXT    NOT NULL DEFAULT 'confirmada' CHECK(status IN ('confirmada', 'pendente', 'cancelada')),
+      modalidade            TEXT    NOT NULL DEFAULT 'presencial' CHECK(modalidade IN ('presencial', 'online')),
+      link_reuniao          TEXT,
+      pre_ata               TEXT,
+      participantes         TEXT,
+      notion_page_id        TEXT,
+      notion_status_enviado TEXT,
+      motivo_cancelamento   TEXT,
       FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
     )
   `);
@@ -117,7 +116,7 @@ function inicializarBanco() {
  * manualmente via PRAGMA.
  */
 function migrarBanco() {
-  const colunas = db.prepare('PRAGMA table_info(reservas)').all().map(c => c.name);
+  let colunas = db.prepare('PRAGMA table_info(reservas)').all().map(c => c.name);
 
   if (!colunas.includes('modalidade')) {
     db.exec("ALTER TABLE reservas ADD COLUMN modalidade TEXT NOT NULL DEFAULT 'presencial'");
@@ -142,6 +141,48 @@ function migrarBanco() {
   if (!colunas.includes('notion_status_enviado')) {
     db.exec('ALTER TABLE reservas ADD COLUMN notion_status_enviado TEXT');
     console.log('✅ Migração: coluna notion_status_enviado adicionada');
+  }
+
+  // Migração: atualiza CHECK constraint para incluir 'cancelada' e adiciona motivo_cancelamento
+  // SQLite não suporta ALTER COLUMN, então recriamos a tabela se necessário.
+  const tableSQL = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='reservas'").get()?.sql || '';
+  if (!tableSQL.includes("'cancelada'")) {
+    console.log('🔄 Migração: atualizando tabela reservas (nova constraint + motivo_cancelamento)...');
+    db.exec(`
+      BEGIN TRANSACTION;
+      CREATE TABLE reservas_temp (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id            INTEGER NOT NULL,
+        titulo                TEXT    NOT NULL,
+        data                  TEXT    NOT NULL,
+        horaInicio            TEXT    NOT NULL,
+        horaFim               TEXT    NOT NULL,
+        status                TEXT    NOT NULL DEFAULT 'confirmada' CHECK(status IN ('confirmada', 'pendente', 'cancelada')),
+        modalidade            TEXT    NOT NULL DEFAULT 'presencial' CHECK(modalidade IN ('presencial', 'online')),
+        link_reuniao          TEXT,
+        pre_ata               TEXT,
+        participantes         TEXT,
+        notion_page_id        TEXT,
+        notion_status_enviado TEXT,
+        motivo_cancelamento   TEXT,
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+      );
+      INSERT INTO reservas_temp
+        (id, usuario_id, titulo, data, horaInicio, horaFim, status, modalidade,
+         link_reuniao, pre_ata, participantes, notion_page_id, notion_status_enviado)
+      SELECT
+        id, usuario_id, titulo, data, horaInicio, horaFim, status, modalidade,
+        link_reuniao, pre_ata, participantes, notion_page_id, notion_status_enviado
+      FROM reservas;
+      DROP TABLE reservas;
+      ALTER TABLE reservas_temp RENAME TO reservas;
+      COMMIT;
+    `);
+    console.log('✅ Migração: tabela reservas atualizada com sucesso.');
+  } else if (!tableSQL.includes('motivo_cancelamento')) {
+    // Constraint já ok mas coluna ainda não existe (caso de borda)
+    db.exec('ALTER TABLE reservas ADD COLUMN motivo_cancelamento TEXT');
+    console.log('✅ Migração: coluna motivo_cancelamento adicionada');
   }
 
   // Tabela de confirmações de presença (RSVP)
@@ -203,6 +244,9 @@ function horaAtual() {
  * @returns {'Concluída'|'Em andamento'|'Agendada'}
  */
 function calcularStatusDinamico(r) {
+  // Reunião cancelada: o status manual sempre prevalece
+  if (r.status === 'cancelada') return 'Cancelada';
+
   const agora = horaAtual();
   const dataHoje = hoje();
 
@@ -459,6 +503,42 @@ app.post('/api/reservas', autenticar, (req, res) => {
         .run(notionPageId, statusParaNotion, novaReserva.id);
     }
   }).catch(() => { });
+});
+
+// ── PATCH /api/reservas/:id/cancelar ────────────────────────
+// Somente o criador pode cancelar, com motivo opcional.
+app.patch('/api/reservas/:id/cancelar', autenticar, (req, res) => {
+  const id = parseInt(req.params.id);
+  const { motivo } = req.body;
+
+  const reserva = db.prepare('SELECT * FROM reservas WHERE id = ?').get(id);
+  if (!reserva) {
+    return res.status(404).json({ erro: true, mensagem: 'Reserva não encontrada.' });
+  }
+
+  // Somente o criador pode cancelar
+  if (reserva.usuario_id !== req.usuario.id) {
+    return res.status(403).json({ erro: true, mensagem: 'Somente o criador da reunião pode cancelá-la.' });
+  }
+
+  if (reserva.status === 'cancelada') {
+    return res.status(400).json({ erro: true, mensagem: 'Esta reunião já está cancelada.' });
+  }
+
+  db.prepare('UPDATE reservas SET status = ?, motivo_cancelamento = ? WHERE id = ?')
+    .run('cancelada', motivo?.trim() || null, id);
+
+  notificarClientes();
+  res.json({ erro: false, mensagem: 'Reunião cancelada com sucesso.' });
+
+  // Atualiza status e motivo no Notion de forma assíncrona
+  console.log(`🔍 Debug cancelamento #${id}: notion_page_id = "${reserva.notion_page_id}", motivo = "${motivo?.trim() || '(vazio)'}"`);
+  if (reserva.notion_page_id) {
+    cancelarPaginaNotion(reserva.notion_page_id, motivo?.trim() || '')
+      .catch(err => console.error('Notion: erro ao atualizar cancelamento:', err.message));
+  } else {
+    console.warn(`⚠️  Reunião #${id} cancelada, mas sem notion_page_id — Notion não foi atualizado.`);
+  }
 });
 
 // ── DELETE /api/reservas/:id ─────────────────────────────────

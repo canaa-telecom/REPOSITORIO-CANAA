@@ -27,6 +27,7 @@ const STATUS_MAP = {
     'Agendada': 'Agendada',
     'Em andamento': 'Em andamento',
     'Concluída': 'Concluído',   // Notion usa "Concluído" (masculino)
+    'Cancelada': 'Cancelada',   // Requer opção "Cancelada" criada no banco Notion
 };
 
 /**
@@ -187,6 +188,34 @@ async function atualizarPaginaNotion(notionPageId, participantes = [], statusDin
 
 
 /**
+ * Cancela uma página no Notion: atualiza o Status para "Cancelada"
+ * e preenche o campo "Motivo do Cancelamento".
+ *
+ * @param {string} notionPageId - ID da página no Notion
+ * @param {string} motivo       - Motivo do cancelamento (pode ser vazio)
+ */
+async function cancelarPaginaNotion(notionPageId, motivo = '') {
+    if (!notionConfigurado() || !notionPageId) return;
+
+    const statusNotion = STATUS_MAP['Cancelada'];
+
+    try {
+        await notion.pages.update({
+            page_id: notionPageId,
+            properties: {
+                ...(statusNotion ? { 'Status': { status: { name: statusNotion } } } : {}),
+                'Motivo do Cancelamento': {
+                    rich_text: [{ text: { content: motivo || '' } }]
+                }
+            }
+        });
+        console.log(`✅ Notion: reunião cancelada → página ${notionPageId} | motivo: "${motivo || 'sem motivo'}"`)
+    } catch (err) {
+        console.error('❌ Notion: erro ao cancelar página:', err.message);
+    }
+}
+
+/**
  * Arquiva (exclui logicamente) uma página no Notion.
  */
 async function arquivarPaginaNotion(notionPageId) {
@@ -243,6 +272,7 @@ module.exports = {
     criarPaginaNotion,
     atualizarStatusNotion,
     atualizarPaginaNotion,
+    cancelarPaginaNotion,
     arquivarPaginaNotion,
     sincronizarTodasReservas,
     notionConfigurado
