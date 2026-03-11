@@ -18,6 +18,8 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
+// CORS: configure CORS_ORIGIN no .env para acessos por IP ou hostname de rede interna.
+// Ex.: CORS_ORIGIN=http://192.168.1.100:3000
 const corsOptions = {
   origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
   optionsSuccessStatus: 200
@@ -79,7 +81,12 @@ function inicializarBanco() {
   // Seed: cria o admin padrão se não existir nenhum
   const jaExisteAdmin = db.prepare('SELECT id FROM usuarios WHERE role = ?').get('admin');
   if (!jaExisteAdmin) {
-    const senhaHash = bcrypt.hashSync('Cna!@#123', 10);
+    // Usa ADMIN_PASSWORD do .env; se não definida, usa a senha padrão como fallback
+    const senhaAdmin = process.env.ADMIN_PASSWORD || 'Cna!@#123';
+    if (!process.env.ADMIN_PASSWORD) {
+      console.warn('⚠️  ADMIN_PASSWORD não definida no .env — usando senha padrão. Defina-a para maior segurança.');
+    }
+    const senhaHash = bcrypt.hashSync(senhaAdmin, 10);
     db.prepare('INSERT INTO usuarios (nome, email, senha, role) VALUES (?, ?, ?, ?)').run(
       'Administrador', 'ti@canaatelecom.com.br', senhaHash, 'admin'
     );
@@ -673,7 +680,7 @@ app.get('*', (req, res) => {
 });
 
 // ============================================================
-// 9. SINCRONIZAÇÃO PERIÓDICA DE STATUS COM O NOTION
+// 8.1 SINCRONIZAÇÃO PERIÓDICA DE STATUS COM O NOTION
 // ============================================================
 
 /**
@@ -712,7 +719,7 @@ async function sincronizarStatusNotion() {
 }
 
 // ============================================================
-// 8. INICIALIZAÇÃO
+// 9. INICIALIZAÇÃO
 // ============================================================
 inicializarBanco();
 

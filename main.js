@@ -290,8 +290,8 @@ async function carregarDashboard() {
     // ── Título da aba ─────────────────────────────────────────
     if (!status.salaLivre) {
       document.title = `🔴 OCUPADA: ${status.reservaAtiva?.titulo || 'Em uso'} — Canaã Telecom`;
-    } else if (online) {
-      document.title = `🟣 ONLINE: ${online.titulo} — Canaã Telecom`;
+    } else if (status.reuniaoOnlineAtiva) {
+      document.title = `🟣 ONLINE: ${status.reuniaoOnlineAtiva.titulo} — Canaã Telecom`;
     } else {
       document.title = '🟢 SALA LIVRE — Canaã Telecom';
     }

@@ -3,15 +3,18 @@ const { Client } = require('@notionhq/client');
 const notion = new Client({ auth: process.env.NOTION_TOKEN });
 const DATABASE_ID = process.env.NOTION_DATABASE_ID;
 
+// Avisa UMA VEZ na inicialização se o Notion não estiver configurado
+const _notionAtivo = !!(process.env.NOTION_TOKEN && process.env.NOTION_DATABASE_ID);
+if (!_notionAtivo) {
+    console.warn('⚠️  Notion: NOTION_TOKEN ou NOTION_DATABASE_ID não configurado no .env. Integração desativada.');
+}
+
 /**
  * Verifica se a integração com o Notion está configurada.
+ * Não emite warnings repetitivos — o aviso é emitido apenas na inicialização do módulo.
  */
 function notionConfigurado() {
-    if (!process.env.NOTION_TOKEN || !process.env.NOTION_DATABASE_ID) {
-        console.warn('⚠️  Notion: NOTION_TOKEN ou NOTION_DATABASE_ID não configurado no .env.');
-        return false;
-    }
-    return true;
+    return _notionAtivo;
 }
 
 /**
@@ -182,8 +185,6 @@ async function atualizarPaginaNotion(notionPageId, participantes = [], statusDin
     }
 }
 
-// Mantém alias para compatibilidade com chamadas existentes no server.js
-const atualizarConfirmadosNotion = atualizarPaginaNotion;
 
 /**
  * Arquiva (exclui logicamente) uma página no Notion.
@@ -242,7 +243,6 @@ module.exports = {
     criarPaginaNotion,
     atualizarStatusNotion,
     atualizarPaginaNotion,
-    atualizarConfirmadosNotion,
     arquivarPaginaNotion,
     sincronizarTodasReservas,
     notionConfigurado
