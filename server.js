@@ -564,6 +564,79 @@ app.delete('/api/reservas/:id', autenticar, (req, res) => {
   }
 });
 
+// ── DELETE /api/reservas/multiplas ───────────────────────────
+// Somente Admin. Apaga múltiplas reuniões de uma vez.
+app.delete('/api/reservas/multiplas', autenticar, apenasAdmin, (req, res) => {
+  const { ids } = req.body;
+
+  if (!ids || !Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ erro: true, mensagem: 'Nenhuma reserva selecionada.' });
+  }
+
+  // Busca as reservas antes de deletar para poder arquivar no Notion
+  const placeholders = ids.map(() => '?').join(',');
+  const reservasParaDeletar = db.prepare(`SELECT * FROM reservas WHERE id IN (${placeholders})`).all(ids);
+
+  if (reservasParaDeletar.length === 0) {
+    return res.status(404).json({ erro: true, mensagem: 'Nenhuma reserva encontrada para exclusão.' });
+  }
+
+  // Executa a exclusão no banco
+  db.prepare(`DELETE FROM reservas WHERE id IN (${placeholders})`).run(ids);
+  notificarClientes();
+
+  res.json({
+    erro: false,
+    mensagem: `${reservasParaDeletar.length} reunião(ões) apagada(s) com sucesso.`,
+    apagadas: reservasParaDeletar.length
+  });
+
+  // Arquiva as páginas no Notion de forma assíncrona
+  reservasParaDeletar.forEach(reserva => {
+    if (reserva.notion_page_id) {
+      arquivarPaginaNotion(reserva.notion_page_id).catch(() => { });
+    }
+  });
+});
+
+// ── PATCH /api/reservas/multiplas/cancelar ───────────────────
+// Somente Admin. Cancela múltiplas reuniões de uma vez com o mesmo motivo.
+app.patch('/api/reservas/multiplas/cancelar', autenticar, apenasAdmin, (req, res) => {
+  const { ids, motivo } = req.body;
+
+  if (!ids || !Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ erro: true, mensagem: 'Nenhuma reserva selecionada.' });
+  }
+
+  const placeholders = ids.map(() => '?').join(',');
+  const reservasParaCancelar = db.prepare(`SELECT * FROM reservas WHERE id IN (${placeholders})`).all(ids);
+
+  if (reservasParaCancelar.length === 0) {
+    return res.status(404).json({ erro: true, mensagem: 'Nenhuma reserva encontrada para cancelamento.' });
+  }
+
+  const justificativa = motivo?.trim() || null;
+  // Só podemos cancelar as que ainda não estão canceladas
+  db.prepare(`UPDATE reservas SET status = 'cancelada', motivo_cancelamento = ? WHERE id IN (${placeholders}) AND status != 'cancelada'`)
+    .run(justificativa, ...ids);
+  
+  notificarClientes();
+
+  res.json({
+    erro: false,
+    mensagem: `${reservasParaCancelar.length} reunião(ões) cancelada(s) com sucesso.`,
+    canceladas: reservasParaCancelar.length
+  });
+
+  // Atualiza também no Notion de forma assíncrona
+  reservasParaCancelar.forEach(reserva => {
+    if (reserva.status !== 'cancelada' && reserva.notion_page_id) {
+      cancelarPaginaNotion(reserva.notion_page_id, justificativa || '')
+        .catch(err => console.error('Notion: erro ao atualizar cancelamento em lote:', err.message));
+    }
+  });
+});
+
 // ── GET /api/notion/status ───────────────────────────────────
 // Informa ao frontend se a integração com o Notion está configurada.
 app.get('/api/notion/status', autenticar, (req, res) => {

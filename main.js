@@ -402,6 +402,8 @@ async function carregarLista(aba) {
       aba === 'historico' ? renderCartaoHistorico(r) : renderCartaoReserva(r)
     ).join('');
 
+    inicializarAcoesLote();
+    atualizarBarraAcaoLote(); // Reset no render
   } catch (err) {
     console.error('Erro ao carregar lista:', err);
     lista.innerHTML = `<div class="text-center py-8 text-red-400 text-sm">Erro ao carregar lista.</div>`;
@@ -417,6 +419,8 @@ function formatarData(iso) {
 
 /** Card compacto para o histórico — título, data/horário e badge de status real */
 function renderCartaoHistorico(r) {
+  const usuario = obterUsuario();
+  const isAdmin = usuario?.role === 'admin';
   const titulo = escapeHtml(r.titulo);
   const data = formatarData(r.data);
   const badgesHistorico = {
@@ -429,8 +433,14 @@ function renderCartaoHistorico(r) {
   const motivoHtml = (r.statusDinamico === 'Cancelada' && r.motivo_cancelamento) ? `
     <p class="text-[10px] text-red-400/70 italic px-4 pb-1.5 leading-relaxed">Motivo: ${escapeHtml(r.motivo_cancelamento)}</p>` : '';
   return `
-    <div class="border-b border-slate-100 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/[0.02] transition-colors">
+    <div class="border-b border-slate-100 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/[0.02] transition-colors relative">
       <div class="flex items-center gap-3 px-4 py-2.5">
+        ${isAdmin ? `<label class="relative flex items-center cursor-pointer flex-shrink-0">
+          <input type="checkbox" value="${r.id}" onchange="atualizarBarraAcaoLote()" class="check-reserva peer sr-only" />
+          <div class="w-4 h-4 border-2 border-slate-300 dark:border-slate-500 rounded bg-white dark:bg-[#0c1220] peer-checked:bg-blue-600 peer-checked:border-blue-600 transition-all flex items-center justify-center">
+            <svg class="w-3 h-3 text-white opacity-0 peer-checked:opacity-100 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+          </div>
+        </label>` : ''}
         <div class="flex-1 min-w-0">
           <p class="text-sm font-semibold dark:text-slate-100 truncate ${r.statusDinamico === 'Cancelada' ? 'line-through opacity-60' : ''}">${titulo}</p>
           <p class="text-xs text-slate-400 font-mono">${data} &nbsp;${r.horaInicio}<span class="text-slate-300 dark:text-slate-600"> → </span>${r.horaFim}</p>
@@ -553,8 +563,18 @@ function renderCartaoReserva(r) {
     </button>` : '';
 
   return `
-    <div id="card-reserva-${r.id}" class="border-b border-slate-100 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/[0.02] transition-colors${r.statusDinamico === 'Cancelada' ? ' opacity-60' : ''}">
+    <div id="card-reserva-${r.id}" class="border-b border-slate-100 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/[0.02] transition-colors${r.statusDinamico === 'Cancelada' ? ' opacity-60' : ''} relative">
       <div class="flex items-center gap-2 px-3 py-2">
+
+        <!-- Checkbox Admin -->
+        ${isAdmin ? `<div class="flex-shrink-0 flex items-center justify-center w-6">
+          <label class="relative flex items-center cursor-pointer">
+            <input type="checkbox" value="${r.id}" onchange="atualizarBarraAcaoLote()" class="check-reserva peer sr-only" />
+            <div class="w-4 h-4 border-2 border-slate-300 dark:border-slate-500 rounded bg-white dark:bg-[#0c1220] peer-checked:bg-blue-600 peer-checked:border-blue-600 transition-all flex items-center justify-center">
+              <svg class="w-3 h-3 text-white opacity-0 peer-checked:opacity-100 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+            </div>
+          </label>
+        </div>` : ''}
 
         <!-- Horário -->
         <div class="flex-shrink-0 w-[68px]">
@@ -875,6 +895,177 @@ async function apagarConcluidas() {
       carregarAnalytics();
     } catch (err) {
       console.error('Erro ao apagar histórico:', err);
+      mostrarModal('erro', 'Erro ao conectar com o servidor.');
+    }
+  };
+
+  botoesDiv.appendChild(btnCancelar);
+  botoesDiv.appendChild(btnConfirmar);
+  barWrap ? modalCard.insertBefore(botoesDiv, barWrap) : modalCard.appendChild(botoesDiv);
+}
+
+// ------------------------------------------------------------
+// AÇÕES EM LOTE (ADMIN)
+// ------------------------------------------------------------
+
+function inicializarAcoesLote() {
+  const checkTodas = document.getElementById('checkTodas');
+  const containerCheckTodas = document.getElementById('containerCheckTodas');
+  if (checkTodas && containerCheckTodas) {
+    checkTodas.checked = false;
+    const temChecks = document.querySelectorAll('.check-reserva').length > 0;
+    const usuario = obterUsuario();
+    if (usuario?.role === 'admin' && temChecks) {
+      containerCheckTodas.classList.remove('hidden');
+    } else {
+      containerCheckTodas.classList.add('hidden');
+    }
+  }
+}
+
+function toggleSelecaoTodas(checkbox) {
+  const checks = document.querySelectorAll('.check-reserva');
+  checks.forEach(c => c.checked = checkbox.checked);
+  atualizarBarraAcaoLote();
+}
+
+function atualizarBarraAcaoLote() {
+  const selecionadas = document.querySelectorAll('.check-reserva:checked').length;
+  const total = document.querySelectorAll('.check-reserva').length;
+  const barra = document.getElementById('barraAcaoLote');
+  const texto = document.getElementById('textoAcaoLote');
+  const checkTodas = document.getElementById('checkTodas');
+
+  if (checkTodas && total > 0) {
+    checkTodas.checked = (selecionadas === total);
+  }
+
+  if (selecionadas > 0) {
+    texto.textContent = `${selecionadas} selecionada(s)`;
+    barra.classList.remove('hidden');
+    barra.classList.add('flex');
+  } else {
+    barra.classList.add('hidden');
+    barra.classList.remove('flex');
+  }
+}
+
+async function cancelarSelecionadas() {
+  const selecionadas = Array.from(document.querySelectorAll('.check-reserva:checked')).map(c => parseInt(c.value));
+  if (selecionadas.length === 0) return;
+
+  mostrarModal('aviso', `Cancelar as ${selecionadas.length} reuniões selecionadas?`);
+
+  document.getElementById('adminConfirmarBtn')?.remove();
+  document.getElementById('adminCancelarBtn')?.remove();
+  document.getElementById('cancelMotivoPainel')?.remove();
+
+  const barWrap = document.getElementById('modalBarWrap');
+  const modalCard = document.getElementById('modalCard');
+
+  // Textarea de motivo
+  const motivoPainel = document.createElement('div');
+  motivoPainel.id = 'cancelMotivoPainel';
+  motivoPainel.className = 'mt-3';
+  motivoPainel.innerHTML = `
+    <textarea id="cancelMotivoTexto" rows="2" maxlength="300" placeholder="Motivo do cancelamento em lote (opcional)"
+      class="w-full text-xs rounded-lg bg-white/5 border border-white/10 text-slate-300 placeholder-slate-500 px-3 py-2 resize-none focus:outline-none focus:border-orange-400 transition-colors"></textarea>
+    <p class="text-[10px] text-slate-500 mt-0.5 text-right">Máx. 300 caracteres</p>
+  `;
+
+  const botoesDiv = document.createElement('div');
+  botoesDiv.className = 'flex gap-2 mt-3 justify-end';
+
+  const btnCancelar = document.createElement('button');
+  btnCancelar.id = 'adminCancelarBtn';
+  btnCancelar.textContent = 'Não';
+  btnCancelar.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-all';
+  btnCancelar.onclick = () => { motivoPainel.remove(); botoesDiv.remove(); fecharModal(); };
+
+  const btnConfirmar = document.createElement('button');
+  btnConfirmar.id = 'adminConfirmarBtn';
+  btnConfirmar.textContent = 'Sim, cancelar';
+  btnConfirmar.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-orange-500 hover:bg-orange-600 text-white transition-all';
+  btnConfirmar.onclick = async () => {
+    const motivo = document.getElementById('cancelMotivoTexto')?.value.trim() || '';
+    motivoPainel.remove();
+    botoesDiv.remove();
+    fecharModal();
+    try {
+      const res = await fetch(`${URL_API}/reservas/multiplas/cancelar`, {
+        method: 'PATCH',
+        headers: headersAuth(),
+        body: JSON.stringify({ ids: selecionadas, motivo })
+      });
+      if (checar401(res.status)) return;
+      const dados = await res.json();
+      if (res.ok) {
+        mostrarModal('sucesso', dados.mensagem, true);
+        carregarDashboard();
+        carregarLista(abaAtiva);
+        carregarAnalytics();
+      } else {
+        mostrarModal('erro', dados.mensagem || 'Erro ao cancelar as reuniões.');
+      }
+    } catch (err) {
+      console.error('Erro:', err);
+      mostrarModal('erro', 'Erro ao conectar com o servidor.');
+    }
+  };
+
+  botoesDiv.appendChild(btnCancelar);
+  botoesDiv.appendChild(btnConfirmar);
+  barWrap ? modalCard.insertBefore(motivoPainel, barWrap) : modalCard.appendChild(motivoPainel);
+  barWrap ? modalCard.insertBefore(botoesDiv, barWrap) : modalCard.appendChild(botoesDiv);
+}
+
+async function apagarSelecionadas() {
+  const selecionadas = Array.from(document.querySelectorAll('.check-reserva:checked')).map(c => parseInt(c.value));
+  if (selecionadas.length === 0) return;
+
+  mostrarModal('aviso', `Deseja apagar definitivamente as ${selecionadas.length} reuniões selecionadas?`);
+
+  // Remove botões anteriores
+  document.getElementById('adminConfirmarBtn')?.remove();
+  document.getElementById('adminCancelarBtn')?.remove();
+
+  const barWrap = document.getElementById('modalBarWrap');
+  const modalCard = document.getElementById('modalCard');
+
+  const botoesDiv = document.createElement('div');
+  botoesDiv.className = 'flex gap-2 mt-4 justify-end';
+
+  const btnCancelar = document.createElement('button');
+  btnCancelar.id = 'adminCancelarBtn';
+  btnCancelar.textContent = 'Cancelar';
+  btnCancelar.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-all';
+  btnCancelar.onclick = () => { botoesDiv.remove(); fecharModal(); };
+
+  const btnConfirmar = document.createElement('button');
+  btnConfirmar.id = 'adminConfirmarBtn';
+  btnConfirmar.textContent = 'Sim, apagar';
+  btnConfirmar.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all';
+  btnConfirmar.onclick = async () => {
+    botoesDiv.remove();
+    fecharModal();
+    try {
+      const res = await fetch(`${URL_API}/reservas/multiplas`, {
+        method: 'DELETE',
+        headers: headersAuth(),
+        body: JSON.stringify({ ids: selecionadas })
+      });
+      if (checar401(res.status)) return;
+      const dados = await res.json();
+      if (res.ok) {
+        mostrarModal('sucesso', dados.mensagem, true);
+        carregarDashboard();
+        carregarLista(abaAtiva);
+        carregarAnalytics();
+      } else {
+        mostrarModal('erro', dados.mensagem || 'Erro ao apagar as reuniões.');
+      }
+    } catch (err) {
+      console.error('Erro:', err);
       mostrarModal('erro', 'Erro ao conectar com o servidor.');
     }
   };
