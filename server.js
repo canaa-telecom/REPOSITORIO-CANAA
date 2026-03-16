@@ -116,7 +116,7 @@ async function inicializarBanco() {
         console.warn('⚠️  ADMIN_PASSWORD não definida no .env — usando senha padrão. Defina-a para maior segurança.');
       }
       const senhaHash = bcrypt.hashSync(senhaAdmin, 10);
-      
+
       await pool.query(`INSERT INTO usuarios (nome, email, senha, role) VALUES ($1, $2, $3, $4)`, [
         'Administrador', 'ti@canaatelecom.com.br', senhaHash, 'admin'
       ]);
@@ -183,7 +183,7 @@ async function migrarBanco() {
       await pool.query("ALTER TABLE reservas ADD COLUMN motivo_cancelamento TEXT");
       console.log('✅ Migração: coluna motivo_cancelamento adicionada');
     }
-  } catch(err) {
+  } catch (err) {
     console.error("❌ Erro durante a migração do banco:", err);
   }
 }
@@ -244,9 +244,13 @@ function calcularStatusDinamico(r) {
   if (r.data > dataHoje) return 'Agendada';
 
   // Mesmo dia: compara por horário
+  // PostgreSQL retorna colunas em minúsculas, então aceitamos os dois formatos
+  const horaIni = r.horainicio || r.horaInicio;
+  const horaFi = r.horafim || r.horaFim;
+
   const agoraMin = horaParaMinutos(agora);
-  const inicioMin = horaParaMinutos(r.horaInicio);
-  const fimMin = horaParaMinutos(r.horaFim);
+  const inicioMin = horaParaMinutos(horaIni);
+  const fimMin = horaParaMinutos(horaFi);
 
   if (agoraMin >= fimMin) return 'Concluída';
   if (agoraMin >= inicioMin) return 'Em andamento';
@@ -340,7 +344,7 @@ app.get('/api/status', async (req, res) => {
       SELECT r.*, u.nome AS gestor
       FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
       WHERE r.data = $1 AND r.status = 'confirmada' AND r.modalidade = 'presencial'
-        AND r.horaInicio <= $2 AND r.horaFim > $3
+        AND r.horainicio <= $2 AND r.horafim > $3
     `, [dataHoje, agora, agora]);
 
     // Reunião online ativa agora
@@ -348,15 +352,15 @@ app.get('/api/status', async (req, res) => {
       SELECT r.*, u.nome AS gestor
       FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
       WHERE r.data = $1 AND r.status = 'confirmada' AND r.modalidade = 'online'
-        AND r.horaInicio <= $2 AND r.horaFim > $3
+        AND r.horainicio <= $2 AND r.horafim > $3
     `, [dataHoje, agora, agora]);
 
     // Próxima reunião confirmada de hoje (qualquer modalidade)
     const proximaReuniaoRes = await pool.query(`
       SELECT r.*, u.nome AS gestor
       FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
-      WHERE r.data = $1 AND r.status = 'confirmada' AND r.horaInicio > $2
-      ORDER BY r.horaInicio ASC LIMIT 1
+      WHERE r.data = $1 AND r.status = 'confirmada' AND r.horainicio > $2
+      ORDER BY r.horainicio ASC LIMIT 1
     `, [dataHoje, agora]);
 
     const reunioesHojeRes = await pool.query(`
@@ -398,16 +402,20 @@ app.get('/api/reservas', autenticar, async (req, res) => {
               WHERE p2.reserva_id = r.id) AS "participantesNomes"
       FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
       WHERE r.data >= $2
-      ORDER BY r.data ASC, r.horaInicio ASC
+      ORDER BY r.data ASC, r.horainicio ASC
     `, [usuarioId, dataHoje]);
 
     const comStatus = reservasRes.rows.map(r => {
-      // O PostgreSQL padroniza aliases sem aspas para lowercase
-      const checkEuConfirmei = r.euconfirmei || r.euConfirmei;
+      // PostgreSQL retorna colunas em minúsculas; normalizamos para camelCase
+      const checkEuConfirmei = r.euconfirmei ?? r.euConfirmei;
       const partNomes = r.participantesnomes || r.participantesNomes;
+      const horaInicio = r.horainicio || r.horaInicio;
+      const horaFim = r.horafim || r.horaFim;
 
       return {
         ...r,
+        horaInicio,
+        horaFim,
         statusDinamico: calcularStatusDinamico(r),
         euConfirmei: parseInt(checkEuConfirmei, 10) > 0,
         confirmados: parseInt(r.confirmados, 10),
@@ -457,15 +465,19 @@ app.post('/api/reservas', autenticar, async (req, res) => {
         WHERE data = $1 AND status = 'confirmada' AND modalidade = 'presencial'
       `, [data]);
 
-      const conflito = reservasDaData.rows.find(r =>
-        temConflito(horaInicio, horaFim, r.horaInicio, r.horaFim)
-      );
+      const conflito = reservasDaData.rows.find(r => {
+        const rInicio = r.horainicio || r.horaInicio;
+        const rFim = r.horafim || r.horaFim;
+        return temConflito(horaInicio, horaFim, rInicio, rFim);
+      });
 
       if (conflito) {
+        const cInicio = conflito.horainicio || conflito.horaInicio;
+        const cFim = conflito.horafim || conflito.horaFim;
         return res.status(409).json({
           erro: true,
           tipoConflito: 'sala',
-          mensagem: `Conflito de horário! A sala já está ocupada por "${conflito.titulo}" das ${conflito.horaInicio} às ${conflito.horaFim}.`
+          mensagem: `Conflito de horário! A sala já está ocupada por "${conflito.titulo}" das ${cInicio} às ${cFim}.`
         });
       }
     }
@@ -499,8 +511,8 @@ app.post('/api/reservas', autenticar, async (req, res) => {
     const statusParaNotion = calcularStatusDinamico(novaReserva);
     criarPaginaNotion(novaReserva, [], statusParaNotion).then(async notionPageId => {
       if (notionPageId) {
-        await pool.query('UPDATE reservas SET notion_page_id = $1, notion_status_enviado = $2 WHERE id = $3', 
-                         [notionPageId, statusParaNotion, novaReserva.id]).catch(() => {});
+        await pool.query('UPDATE reservas SET notion_page_id = $1, notion_status_enviado = $2 WHERE id = $3',
+          [notionPageId, statusParaNotion, novaReserva.id]).catch(() => { });
       }
     }).catch(() => { });
 
@@ -529,8 +541,8 @@ app.patch('/api/reservas/:id/cancelar', autenticar, async (req, res) => {
       return res.status(400).json({ erro: true, mensagem: 'Esta reunião já está cancelada.' });
     }
 
-    await pool.query('UPDATE reservas SET status = $1, motivo_cancelamento = $2 WHERE id = $3', 
-                     ['cancelada', motivo?.trim() || null, id]);
+    await pool.query('UPDATE reservas SET status = $1, motivo_cancelamento = $2 WHERE id = $3',
+      ['cancelada', motivo?.trim() || null, id]);
 
     notificarClientes();
     res.json({ erro: false, mensagem: 'Reunião cancelada com sucesso.' });
@@ -631,14 +643,14 @@ app.patch('/api/reservas/multiplas/cancelar', autenticar, apenasAdmin, async (re
     }
 
     const justificativa = motivo?.trim() || null;
-    
+
     // Concatena o valor do status cancelada e o valor do motivo aos IDs
     const currentParamsLength = ids.length;
     await pool.query(
       `UPDATE reservas SET status = 'cancelada', motivo_cancelamento = $${currentParamsLength + 1} WHERE id IN (${placeholders}) AND status != 'cancelada'`,
       [...ids, justificativa]
     );
-    
+
     notificarClientes();
 
     res.json({
@@ -682,8 +694,12 @@ app.post('/api/notion/sync', autenticar, apenasAdmin, async (req, res) => {
 
     const reservasComStatus = reservasRes.rows.map(r => {
       const partNomes = r.participantesnomes || r.participantesNomes;
+      const horaInicio = r.horainicio || r.horaInicio;
+      const horaFim = r.horafim || r.horaFim;
       return {
         ...r,
+        horaInicio,
+        horaFim,
         statusDinamico: calcularStatusDinamico(r),
         participantesNomes: partNomes ? partNomes.split('||') : []
       };
@@ -692,8 +708,8 @@ app.post('/api/notion/sync', autenticar, apenasAdmin, async (req, res) => {
     const { criadas, atualizadas, novasIds } = await sincronizarTodasReservas(reservasComStatus);
 
     for (const { id, notionPageId, status } of novasIds) {
-      await pool.query('UPDATE reservas SET notion_page_id = $1, notion_status_enviado = $2 WHERE id = $3', 
-                       [notionPageId, status, id]);
+      await pool.query('UPDATE reservas SET notion_page_id = $1, notion_status_enviado = $2 WHERE id = $3',
+        [notionPageId, status, id]);
     }
 
     const total = criadas + atualizadas;
@@ -745,7 +761,7 @@ app.patch('/api/reservas/:id/presenca', autenticar, async (req, res) => {
         JOIN usuarios u ON u.id = p.usuario_id
         WHERE p.reserva_id = $1
       `, [reservaId]);
-      
+
       const nomes = nomesRes.rows.map(r => r.nome);
       const statusAtual = calcularStatusDinamico(reservaCompleta);
       atualizarPaginaNotion(reservaCompleta.notion_page_id, nomes, statusAtual)
@@ -791,18 +807,22 @@ app.get('/api/historico', autenticar, async (req, res) => {
     }
 
     const comStatus = historico.map(r => {
-      const checkEuConfirmei = r.euconfirmei || r.euConfirmei;
+      const checkEuConfirmei = r.euconfirmei ?? r.euConfirmei;
       const partNomes = r.participantesnomes || r.participantesNomes;
-      
+      const horaInicio = r.horainicio || r.horaInicio;
+      const horaFim = r.horafim || r.horaFim;
+
       return {
         ...r,
+        horaInicio,
+        horaFim,
         statusDinamico: calcularStatusDinamico(r),
         euConfirmei: parseInt(checkEuConfirmei, 10) > 0,
         confirmados: parseInt(r.confirmados, 10),
         participantesNomes: partNomes ? partNomes.split('||') : []
       };
     });
-    
+
     res.json(comStatus);
   } catch (err) {
     console.error(err);

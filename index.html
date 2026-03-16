@@ -123,20 +123,20 @@
       <!-- Texto -->
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2 flex-wrap">
-          <span class="text-[10px] font-black uppercase tracking-[0.2em] text-violet-300">● EM ANDAMENTO</span>
+          <span class="text-[10px] font-black uppercase tracking-[0.2em] text-violet-700 dark:text-violet-300">● EM ANDAMENTO</span>
           <span class="text-[10px] text-violet-500/60 hidden sm:inline">·</span>
-          <span class="text-[10px] text-violet-400/60 hidden sm:inline">Reunião Online</span>
+          <span class="text-[10px] text-violet-600/70 dark:text-violet-400/60 hidden sm:inline">Reunião Online</span>
         </div>
         <p id="bannerOnlineTitulo"
-          class="text-sm font-display font-bold text-white truncate leading-snug mt-0.5 max-w-xs sm:max-w-md"></p>
-        <p id="bannerOnlineGestor" class="text-[10px] text-violet-300/60 truncate"></p>
+          class="text-sm font-display font-bold text-slate-900 dark:text-white truncate leading-snug mt-0.5 max-w-xs sm:max-w-md"></p>
+        <p id="bannerOnlineGestor" class="text-[10px] text-violet-700/70 dark:text-violet-300/60 truncate"></p>
       </div>
 
       <!-- Horário -->
       <div id="bannerOnlineHorario"
         class="hidden sm:flex flex-col items-center flex-shrink-0 px-3 py-1.5 rounded-lg border border-violet-500/25 bg-violet-500/10">
-        <span class="text-[9px] font-bold uppercase tracking-widest text-violet-400/70">Horário</span>
-        <span id="bannerOnlineHorarioTexto" class="text-xs font-mono font-bold text-violet-200"></span>
+        <span class="text-[9px] font-bold uppercase tracking-widest text-violet-600 dark:text-violet-400/70">Horário</span>
+        <span id="bannerOnlineHorarioTexto" class="text-xs font-mono font-bold text-violet-800 dark:text-violet-200"></span>
       </div>
 
       <!-- Botão Entrar -->
@@ -170,7 +170,7 @@
 
       <div class="p-4 border-r border-slate-200 dark:border-white/10">
         <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">REUNIÃO ATIVA</p>
-        <p id="cardReuniaoTitulo" class="text-lg font-display font-bold text-slate-200 truncate">—</p>
+        <p id="cardReuniaoTitulo" class="text-lg font-display font-bold text-slate-800 dark:text-slate-200 truncate">—</p>
       </div>
 
       <div class="p-4 border-r border-slate-200 dark:border-white/10">
@@ -293,13 +293,13 @@
 
       <div class="bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-white/10 rounded-xl p-4 shadow-sm">
         <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Mais Agendamentos</p>
-        <p id="topQtdNome" class="font-display font-bold text-sm dark:text-white truncate">—</p>
+        <p id="topQtdNome" class="font-display font-bold text-sm text-slate-800 dark:text-white truncate">—</p>
         <p id="topQtdValor" class="text-xs text-blue-600 dark:text-canaa-cyan mt-0.5">—</p>
       </div>
 
       <div class="bg-white dark:bg-[#0c1220] border border-slate-200 dark:border-white/10 rounded-xl p-4 shadow-sm">
         <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Maior Tempo de Uso</p>
-        <p id="topTempoNome" class="font-display font-bold text-sm dark:text-white truncate">—</p>
+        <p id="topTempoNome" class="font-display font-bold text-sm text-slate-800 dark:text-white truncate">—</p>
         <p id="topTempoValor" class="text-xs text-cyan-600 dark:text-canaa-cyan mt-0.5">—</p>
       </div>
 
@@ -345,7 +345,7 @@
   ═══════════════════════════════════════════════════════ -->
   <div id="modalOverlay" class="modal-overlay hidden" onclick="fecharModalFora(event)">
     <div id="modalCard"
-      class="modal-card w-full max-w-sm mx-4 bg-[#0d1326] border border-white/10 rounded-2xl shadow-2xl p-5">
+      class="modal-card w-full max-w-sm mx-4 bg-white dark:bg-[#0d1326] border border-slate-200 dark:border-white/10 rounded-2xl shadow-2xl p-5">
       <div class="flex items-start gap-3">
         <!-- Ícone -->
         <div id="modalIconWrap"
@@ -354,11 +354,11 @@
         </div>
         <!-- Conteúdo -->
         <div class="flex-1 min-w-0">
-          <p id="modalTitulo" class="font-display font-bold text-sm text-white mb-1">Erro</p>
-          <p id="modalMsg" class="text-xs text-slate-300 leading-relaxed"></p>
+          <p id="modalTitulo" class="font-display font-bold text-sm text-slate-900 dark:text-white mb-1">Erro</p>
+          <p id="modalMsg" class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed"></p>
         </div>
         <!-- Fechar -->
-        <button onclick="fecharModal()" class="text-slate-500 hover:text-white transition-colors flex-shrink-0 mt-0.5">
+        <button onclick="fecharModal()" class="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-white transition-colors flex-shrink-0 mt-0.5">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
