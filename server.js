@@ -3,7 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const Database = require('better-sqlite3');
+const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { criarPaginaNotion, atualizarStatusNotion, atualizarPaginaNotion, cancelarPaginaNotion, arquivarPaginaNotion, sincronizarTodasReservas, notionConfigurado } = require('./notion');
@@ -22,8 +22,25 @@ app.use(cors()); // Aceita qualquer origem — seguro para rede interna
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
-// ── 3. BANCO DE DADOS ────────────────────────────────────────
-const db = new Database(path.join(__dirname, 'sala_reuniao.db'));
+// ── 3. BANCO DE DADOS PostgreSQL ────────────────────────────
+const pool = new Pool({
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT || 5432,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME,
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
+});
+
+// Testar a conexão no início
+pool.connect()
+  .then(client => {
+    console.log('✅ Conectado ao PostgreSQL com sucesso!');
+    client.release();
+  })
+  .catch(err => {
+    console.error('❌ Erro ao conectar no PostgreSQL. Verifique suas credenciais em .env', err.message);
+  });
 
 // ── 4. SERVER-SENT EVENTS ────────────────────────────────────
 /** Conjunto de respostas SSE ativas (um por aba aberta) */
@@ -41,161 +58,134 @@ function notificarClientes(evento = 'atualizacao') {
 // ============================================================
 
 /** Cria as tabelas e insere dados iniciais se o banco estiver vazio */
-function inicializarBanco() {
-  // Tabela de usuários
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS usuarios (
-      id    INTEGER PRIMARY KEY AUTOINCREMENT,
-      nome  TEXT    NOT NULL,
-      email TEXT    NOT NULL UNIQUE,
-      senha TEXT    NOT NULL,
-      role  TEXT    NOT NULL DEFAULT 'gestor' CHECK(role IN ('admin', 'gestor'))
-    )
-  `);
-
-  // Tabela de reservas
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS reservas (
-      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-      usuario_id            INTEGER NOT NULL,
-      titulo                TEXT    NOT NULL,
-      data                  TEXT    NOT NULL,
-      horaInicio            TEXT    NOT NULL,
-      horaFim               TEXT    NOT NULL,
-      status                TEXT    NOT NULL DEFAULT 'confirmada' CHECK(status IN ('confirmada', 'pendente', 'cancelada')),
-      modalidade            TEXT    NOT NULL DEFAULT 'presencial' CHECK(modalidade IN ('presencial', 'online')),
-      link_reuniao          TEXT,
-      pre_ata               TEXT,
-      participantes         TEXT,
-      notion_page_id        TEXT,
-      notion_status_enviado TEXT,
-      motivo_cancelamento   TEXT,
-      FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
-    )
-  `);
-
-  // Adiciona colunas novas em bancos criados antes da v2.1
-  migrarBanco();
-
-  // Seed: cria o admin padrão se não existir nenhum
-  const jaExisteAdmin = db.prepare('SELECT id FROM usuarios WHERE role = ?').get('admin');
-  if (!jaExisteAdmin) {
-    // Usa ADMIN_PASSWORD do .env; se não definida, usa a senha padrão como fallback
-    const senhaAdmin = process.env.ADMIN_PASSWORD || 'Cna!@#123';
-    if (!process.env.ADMIN_PASSWORD) {
-      console.warn('⚠️  ADMIN_PASSWORD não definida no .env — usando senha padrão. Defina-a para maior segurança.');
-    }
-    const senhaHash = bcrypt.hashSync(senhaAdmin, 10);
-    db.prepare('INSERT INTO usuarios (nome, email, senha, role) VALUES (?, ?, ?, ?)').run(
-      'Administrador', 'ti@canaatelecom.com.br', senhaHash, 'admin'
-    );
-    console.log('✅ Admin padrão criado: ti@canaatelecom.com.br');
-
-    const adminId = db.prepare('SELECT id FROM usuarios WHERE role = ?').get('admin').id;
-    const dataHoje = hoje();
-
-    // Dados de demonstração com os novos campos
-    const demos = [
-      [adminId, 'Planejamento Q3', dataHoje, '08:00', '09:30', 'confirmada', 'presencial', null],
-      [adminId, 'Daily Standup', dataHoje, '10:00', '11:00', 'confirmada', 'presencial', null],
-      [adminId, 'Reunião com Fornecedor', dataHoje, '14:00', '15:00', 'pendente', 'presencial', null],
-      [adminId, 'Review de Sprint (Online)', dataHoje, '16:00', '17:00', 'confirmada', 'online', 'https://meet.google.com/abc-defg-hij'],
-    ];
-
-    const stmt = db.prepare(`
-      INSERT INTO reservas (usuario_id, titulo, data, horaInicio, horaFim, status, modalidade, link_reuniao)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+async function inicializarBanco() {
+  try {
+    // Tabela de usuários
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS usuarios (
+        id    SERIAL PRIMARY KEY,
+        nome  VARCHAR(255) NOT NULL,
+        email VARCHAR(255) NOT NULL UNIQUE,
+        senha VARCHAR(255) NOT NULL,
+        role  VARCHAR(50)  NOT NULL DEFAULT 'gestor' CHECK(role IN ('admin', 'gestor'))
+      )
     `);
-    demos.forEach(d => stmt.run(...d));
+
+    // Tabela de reservas
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS reservas (
+        id                    SERIAL PRIMARY KEY,
+        usuario_id            INTEGER NOT NULL,
+        titulo                VARCHAR(255) NOT NULL,
+        data                  VARCHAR(10)  NOT NULL,
+        horaInicio            VARCHAR(5)   NOT NULL,
+        horaFim               VARCHAR(5)   NOT NULL,
+        status                VARCHAR(50)  NOT NULL DEFAULT 'confirmada' CHECK(status IN ('confirmada', 'pendente', 'cancelada')),
+        modalidade            VARCHAR(50)  NOT NULL DEFAULT 'presencial' CHECK(modalidade IN ('presencial', 'online')),
+        link_reuniao          TEXT,
+        pre_ata               TEXT,
+        participantes         TEXT,
+        notion_page_id        VARCHAR(255),
+        notion_status_enviado VARCHAR(50),
+        motivo_cancelamento   TEXT,
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+      )
+    `);
+
+    // Adiciona colunas novas se estiver migrando de uma versão antiga
+    await migrarBanco();
+
+    // Tabela de presenças
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS presencas (
+        id         SERIAL PRIMARY KEY,
+        reserva_id INTEGER NOT NULL,
+        usuario_id INTEGER NOT NULL,
+        UNIQUE(reserva_id, usuario_id),
+        FOREIGN KEY (reserva_id) REFERENCES reservas(id) ON DELETE CASCADE,
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+      )
+    `);
+
+    // Seed: cria o admin padrão se não existir nenhum
+    const adminCheck = await pool.query("SELECT id FROM usuarios WHERE role = 'admin'");
+    if (adminCheck.rows.length === 0) {
+      // Usa ADMIN_PASSWORD do .env; se não definida, usa a senha padrão como fallback
+      const senhaAdmin = process.env.ADMIN_PASSWORD || 'Cna!@#123';
+      if (!process.env.ADMIN_PASSWORD) {
+        console.warn('⚠️  ADMIN_PASSWORD não definida no .env — usando senha padrão. Defina-a para maior segurança.');
+      }
+      const senhaHash = bcrypt.hashSync(senhaAdmin, 10);
+      
+      await pool.query(`INSERT INTO usuarios (nome, email, senha, role) VALUES ($1, $2, $3, $4)`, [
+        'Administrador', 'ti@canaatelecom.com.br', senhaHash, 'admin'
+      ]);
+      console.log('✅ Admin padrão criado: ti@canaatelecom.com.br');
+
+      const adminIdRes = await pool.query("SELECT id FROM usuarios WHERE role = 'admin'");
+      const adminId = adminIdRes.rows[0].id;
+      const dataHoje = hoje();
+
+      // Dados de demonstração com os novos campos
+      const demos = [
+        [adminId, 'Planejamento Q3', dataHoje, '08:00', '09:30', 'confirmada', 'presencial', null],
+        [adminId, 'Daily Standup', dataHoje, '10:00', '11:00', 'confirmada', 'presencial', null],
+        [adminId, 'Reunião com Fornecedor', dataHoje, '14:00', '15:00', 'pendente', 'presencial', null],
+        [adminId, 'Review de Sprint (Online)', dataHoje, '16:00', '17:00', 'confirmada', 'online', 'https://meet.google.com/abc-defg-hij'],
+      ];
+
+      for (const d of demos) {
+        await pool.query(`
+          INSERT INTO reservas (usuario_id, titulo, data, horaInicio, horaFim, status, modalidade, link_reuniao)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, d);
+      }
+    }
+  } catch (err) {
+    console.error("❌ Erro na inicialização do banco de dados PostgreSQL:", err);
   }
 }
 
 /**
- * Migração: adiciona colunas que não existem em bancos mais antigos.
- * SQLite não suporta IF NOT EXISTS em ALTER TABLE, por isso verificamos
- * manualmente via PRAGMA.
+ * Migração: adiciona colunas que não existem (equivalente ao PRAGMA do SQLite).
+ * O PostgreSQL utiliza o information_schema para checar colunas.
  */
-function migrarBanco() {
-  let colunas = db.prepare('PRAGMA table_info(reservas)').all().map(c => c.name);
+async function migrarBanco() {
+  try {
+    const colRes = await pool.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'reservas'");
+    const colunas = colRes.rows.map(c => c.column_name);
 
-  if (!colunas.includes('modalidade')) {
-    db.exec("ALTER TABLE reservas ADD COLUMN modalidade TEXT NOT NULL DEFAULT 'presencial'");
-    console.log('✅ Migração: coluna modalidade adicionada');
+    if (!colunas.includes('modalidade')) {
+      await pool.query("ALTER TABLE reservas ADD COLUMN modalidade VARCHAR(50) NOT NULL DEFAULT 'presencial'");
+      console.log('✅ Migração: coluna modalidade adicionada');
+    }
+    if (!colunas.includes('link_reuniao')) {
+      await pool.query("ALTER TABLE reservas ADD COLUMN link_reuniao TEXT");
+      console.log('✅ Migração: coluna link_reuniao adicionada');
+    }
+    if (!colunas.includes('pre_ata')) {
+      await pool.query("ALTER TABLE reservas ADD COLUMN pre_ata TEXT");
+      console.log('✅ Migração: coluna pre_ata adicionada');
+    }
+    if (!colunas.includes('participantes')) {
+      await pool.query("ALTER TABLE reservas ADD COLUMN participantes TEXT");
+      console.log('✅ Migração: coluna participantes adicionada');
+    }
+    if (!colunas.includes('notion_page_id')) {
+      await pool.query("ALTER TABLE reservas ADD COLUMN notion_page_id VARCHAR(255)");
+      console.log('✅ Migração: coluna notion_page_id adicionada');
+    }
+    if (!colunas.includes('notion_status_enviado')) {
+      await pool.query("ALTER TABLE reservas ADD COLUMN notion_status_enviado VARCHAR(50)");
+      console.log('✅ Migração: coluna notion_status_enviado adicionada');
+    }
+    if (!colunas.includes('motivo_cancelamento')) {
+      await pool.query("ALTER TABLE reservas ADD COLUMN motivo_cancelamento TEXT");
+      console.log('✅ Migração: coluna motivo_cancelamento adicionada');
+    }
+  } catch(err) {
+    console.error("❌ Erro durante a migração do banco:", err);
   }
-  if (!colunas.includes('link_reuniao')) {
-    db.exec('ALTER TABLE reservas ADD COLUMN link_reuniao TEXT');
-    console.log('✅ Migração: coluna link_reuniao adicionada');
-  }
-  if (!colunas.includes('pre_ata')) {
-    db.exec('ALTER TABLE reservas ADD COLUMN pre_ata TEXT');
-    console.log('✅ Migração: coluna pre_ata adicionada');
-  }
-  if (!colunas.includes('participantes')) {
-    db.exec('ALTER TABLE reservas ADD COLUMN participantes TEXT');
-    console.log('✅ Migração: coluna participantes adicionada');
-  }
-  if (!colunas.includes('notion_page_id')) {
-    db.exec('ALTER TABLE reservas ADD COLUMN notion_page_id TEXT');
-    console.log('✅ Migração: coluna notion_page_id adicionada');
-  }
-  if (!colunas.includes('notion_status_enviado')) {
-    db.exec('ALTER TABLE reservas ADD COLUMN notion_status_enviado TEXT');
-    console.log('✅ Migração: coluna notion_status_enviado adicionada');
-  }
-
-  // Migração: atualiza CHECK constraint para incluir 'cancelada' e adiciona motivo_cancelamento
-  // SQLite não suporta ALTER COLUMN, então recriamos a tabela se necessário.
-  const tableSQL = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='reservas'").get()?.sql || '';
-  if (!tableSQL.includes("'cancelada'")) {
-    console.log('🔄 Migração: atualizando tabela reservas (nova constraint + motivo_cancelamento)...');
-    db.exec(`
-      BEGIN TRANSACTION;
-      CREATE TABLE reservas_temp (
-        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-        usuario_id            INTEGER NOT NULL,
-        titulo                TEXT    NOT NULL,
-        data                  TEXT    NOT NULL,
-        horaInicio            TEXT    NOT NULL,
-        horaFim               TEXT    NOT NULL,
-        status                TEXT    NOT NULL DEFAULT 'confirmada' CHECK(status IN ('confirmada', 'pendente', 'cancelada')),
-        modalidade            TEXT    NOT NULL DEFAULT 'presencial' CHECK(modalidade IN ('presencial', 'online')),
-        link_reuniao          TEXT,
-        pre_ata               TEXT,
-        participantes         TEXT,
-        notion_page_id        TEXT,
-        notion_status_enviado TEXT,
-        motivo_cancelamento   TEXT,
-        FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
-      );
-      INSERT INTO reservas_temp
-        (id, usuario_id, titulo, data, horaInicio, horaFim, status, modalidade,
-         link_reuniao, pre_ata, participantes, notion_page_id, notion_status_enviado)
-      SELECT
-        id, usuario_id, titulo, data, horaInicio, horaFim, status, modalidade,
-        link_reuniao, pre_ata, participantes, notion_page_id, notion_status_enviado
-      FROM reservas;
-      DROP TABLE reservas;
-      ALTER TABLE reservas_temp RENAME TO reservas;
-      COMMIT;
-    `);
-    console.log('✅ Migração: tabela reservas atualizada com sucesso.');
-  } else if (!tableSQL.includes('motivo_cancelamento')) {
-    // Constraint já ok mas coluna ainda não existe (caso de borda)
-    db.exec('ALTER TABLE reservas ADD COLUMN motivo_cancelamento TEXT');
-    console.log('✅ Migração: coluna motivo_cancelamento adicionada');
-  }
-
-  // Tabela de confirmações de presença (RSVP)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS presencas (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      reserva_id INTEGER NOT NULL,
-      usuario_id INTEGER NOT NULL,
-      UNIQUE(reserva_id, usuario_id),
-      FOREIGN KEY (reserva_id) REFERENCES reservas(id) ON DELETE CASCADE,
-      FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
-    )
-  `);
 }
 
 // ============================================================
@@ -294,15 +284,12 @@ function apenasAdmin(req, res, next) {
 // ============================================================
 
 // ── GET /api/eventos (SSE) ───────────────────────────────────
-// Endpoint público: só envia um sinal genérico sem dados sensíveis.
-// O frontend recarrega os dados via endpoints autenticados ao receber o evento.
 app.get('/api/eventos', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  // Envia um heartbeat imediato para confirmar a conexão
   res.write(': conectado\n\n');
 
   sseClients.add(res);
@@ -310,369 +297,403 @@ app.get('/api/eventos', (req, res) => {
 });
 
 // ── POST /api/login ──────────────────────────────────────────
-app.post('/api/login', (req, res) => {
-  const { email, senha } = req.body;
-  if (!email || !senha) {
-    return res.status(400).json({ erro: true, mensagem: 'E-mail e senha são obrigatórios.' });
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, senha } = req.body;
+    if (!email || !senha) {
+      return res.status(400).json({ erro: true, mensagem: 'E-mail e senha são obrigatórios.' });
+    }
+
+    const { rows } = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
+    const usuario = rows[0];
+
+    if (!usuario || !bcrypt.compareSync(senha, usuario.senha)) {
+      return res.status(401).json({ erro: true, mensagem: 'E-mail ou senha incorretos.' });
+    }
+
+    const token = jwt.sign(
+      { id: usuario.id, nome: usuario.nome, email: usuario.email, role: usuario.role },
+      JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+
+    res.json({
+      erro: false,
+      mensagem: `Bem-vindo, ${usuario.nome}!`,
+      token,
+      usuario: { id: usuario.id, nome: usuario.nome, email: usuario.email, role: usuario.role }
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: true, mensagem: 'Erro ao fazer login no servidor' });
   }
-
-  const usuario = db.prepare('SELECT * FROM usuarios WHERE email = ?').get(email);
-  if (!usuario || !bcrypt.compareSync(senha, usuario.senha)) {
-    return res.status(401).json({ erro: true, mensagem: 'E-mail ou senha incorretos.' });
-  }
-
-  const token = jwt.sign(
-    { id: usuario.id, nome: usuario.nome, email: usuario.email, role: usuario.role },
-    JWT_SECRET,
-    { expiresIn: '8h' }
-  );
-
-  res.json({
-    erro: false,
-    mensagem: `Bem-vindo, ${usuario.nome}!`,
-    token,
-    usuario: { id: usuario.id, nome: usuario.nome, email: usuario.email, role: usuario.role }
-  });
 });
 
 // ── GET /api/status ──────────────────────────────────────────
-// Rota pública. A sala só aparece como OCUPADA se houver uma reunião
-// PRESENCIAL confirmada acontecendo agora.
-app.get('/api/status', (req, res) => {
-  const agora = horaAtual();
-  const dataHoje = hoje();
+app.get('/api/status', async (req, res) => {
+  try {
+    const agora = horaAtual();
+    const dataHoje = hoje();
 
-  // Reunião presencial ativa agora
-  const reservaAtiva = db.prepare(`
-    SELECT r.*, u.nome AS gestor
-    FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
-    WHERE r.data = ? AND r.status = 'confirmada' AND r.modalidade = 'presencial'
-      AND r.horaInicio <= ? AND r.horaFim > ?
-  `).get(dataHoje, agora, agora);
+    // Reunião presencial ativa agora
+    const reservaAtivaRes = await pool.query(`
+      SELECT r.*, u.nome AS gestor
+      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      WHERE r.data = $1 AND r.status = 'confirmada' AND r.modalidade = 'presencial'
+        AND r.horaInicio <= $2 AND r.horaFim > $3
+    `, [dataHoje, agora, agora]);
 
-  // Reunião online ativa agora
-  const reuniaoOnlineAtiva = db.prepare(`
-    SELECT r.*, u.nome AS gestor
-    FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
-    WHERE r.data = ? AND r.status = 'confirmada' AND r.modalidade = 'online'
-      AND r.horaInicio <= ? AND r.horaFim > ?
-  `).get(dataHoje, agora, agora);
+    // Reunião online ativa agora
+    const reuniaoOnlineAtivaRes = await pool.query(`
+      SELECT r.*, u.nome AS gestor
+      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      WHERE r.data = $1 AND r.status = 'confirmada' AND r.modalidade = 'online'
+        AND r.horaInicio <= $2 AND r.horaFim > $3
+    `, [dataHoje, agora, agora]);
 
-  // Próxima reunião confirmada de hoje (qualquer modalidade)
-  const proximaReuniao = db.prepare(`
-    SELECT r.*, u.nome AS gestor
-    FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
-    WHERE r.data = ? AND r.status = 'confirmada' AND r.horaInicio > ?
-    ORDER BY r.horaInicio ASC LIMIT 1
-  `).get(dataHoje, agora);
+    // Próxima reunião confirmada de hoje (qualquer modalidade)
+    const proximaReuniaoRes = await pool.query(`
+      SELECT r.*, u.nome AS gestor
+      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      WHERE r.data = $1 AND r.status = 'confirmada' AND r.horaInicio > $2
+      ORDER BY r.horaInicio ASC LIMIT 1
+    `, [dataHoje, agora]);
 
-  const reunioesHoje = db.prepare(
-    `SELECT COUNT(*) AS total FROM reservas WHERE data = ? AND status = 'confirmada'`
-  ).get(dataHoje).total;
+    const reunioesHojeRes = await pool.query(`
+      SELECT COUNT(*) AS total FROM reservas WHERE data = $1 AND status = 'confirmada'
+    `, [dataHoje]);
 
-  const pendentes = db.prepare(
-    `SELECT COUNT(*) AS total FROM reservas WHERE status = 'pendente'`
-  ).get().total;
+    const pendentesRes = await pool.query(`
+      SELECT COUNT(*) AS total FROM reservas WHERE status = 'pendente'
+    `);
 
-  res.json({
-    salaLivre: !reservaAtiva,
-    reservaAtiva: reservaAtiva || null,
-    reuniaoOnlineAtiva: reuniaoOnlineAtiva || null,
-    proximaReuniao: proximaReuniao || null,
-    reunioesHoje,
-    pendentes,
-    horaAtual: agora
-  });
+    res.json({
+      salaLivre: reservaAtivaRes.rows.length === 0,
+      reservaAtiva: reservaAtivaRes.rows[0] || null,
+      reuniaoOnlineAtiva: reuniaoOnlineAtivaRes.rows[0] || null,
+      proximaReuniao: proximaReuniaoRes.rows[0] || null,
+      reunioesHoje: parseInt(reunioesHojeRes.rows[0].total, 10),
+      pendentes: parseInt(pendentesRes.rows[0].total, 10),
+      horaAtual: agora
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: true, mensagem: 'Erro interno ao buscar status' });
+  }
 });
 
 // ── GET /api/reservas ────────────────────────────────────────
-app.get('/api/reservas', autenticar, (req, res) => {
-  const dataHoje = hoje();
-  const usuarioId = req.usuario.id;
+app.get('/api/reservas', autenticar, async (req, res) => {
+  try {
+    const dataHoje = hoje();
+    const usuarioId = req.usuario.id;
 
-  const reservas = db.prepare(`
-    SELECT r.*,
-           u.nome AS gestor,
-           (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
-           (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = ?) AS euConfirmei,
-           (SELECT GROUP_CONCAT(u2.nome, '||') FROM presencas p2
-            JOIN usuarios u2 ON u2.id = p2.usuario_id
-            WHERE p2.reserva_id = r.id) AS participantesNomes
-    FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
-    WHERE r.data >= ?
-    ORDER BY r.data ASC, r.horaInicio ASC
-  `).all(usuarioId, dataHoje);
+    const reservasRes = await pool.query(`
+      SELECT r.*,
+             u.nome AS gestor,
+             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
+             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = $1) AS "euConfirmei",
+             (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
+              JOIN usuarios u2 ON u2.id = p2.usuario_id
+              WHERE p2.reserva_id = r.id) AS "participantesNomes"
+      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      WHERE r.data >= $2
+      ORDER BY r.data ASC, r.horaInicio ASC
+    `, [usuarioId, dataHoje]);
 
-  const comStatus = reservas.map(r => ({
-    ...r,
-    statusDinamico: calcularStatusDinamico(r),
-    euConfirmei: r.euConfirmei > 0,
-    participantesNomes: r.participantesNomes ? r.participantesNomes.split('||') : []
-  }));
+    const comStatus = reservasRes.rows.map(r => {
+      // O PostgreSQL padroniza aliases sem aspas para lowercase
+      const checkEuConfirmei = r.euconfirmei || r.euConfirmei;
+      const partNomes = r.participantesnomes || r.participantesNomes;
 
-  res.json(comStatus);
+      return {
+        ...r,
+        statusDinamico: calcularStatusDinamico(r),
+        euConfirmei: parseInt(checkEuConfirmei, 10) > 0,
+        confirmados: parseInt(r.confirmados, 10),
+        participantesNomes: partNomes ? partNomes.split('||') : []
+      };
+    });
+
+    res.json(comStatus);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: true, mensagem: 'Erro interno do servidor' });
+  }
 });
 
 // ── POST /api/reservas ───────────────────────────────────────
-app.post('/api/reservas', autenticar, (req, res) => {
-  const {
-    titulo, data, horaInicio, horaFim,
-    modalidade = 'presencial', link_reuniao,
-    pre_ata
-  } = req.body;
-  const usuario_id = req.usuario.id;
+app.post('/api/reservas', autenticar, async (req, res) => {
+  try {
+    const {
+      titulo, data, horaInicio, horaFim,
+      modalidade = 'presencial', link_reuniao,
+      pre_ata
+    } = req.body;
+    const usuario_id = req.usuario.id;
 
-  // Validação 1: campos obrigatórios
-  if (!titulo || !data || !horaInicio || !horaFim) {
-    return res.status(400).json({ erro: true, mensagem: 'Todos os campos são obrigatórios.' });
-  }
-
-  // Validação 2: formatos válidos de data e hora
-  if (!isDataValida(data)) {
-    return res.status(400).json({ erro: true, mensagem: 'Formato de data inválido. Use YYYY-MM-DD.' });
-  }
-  if (!isHoraValida(horaInicio) || !isHoraValida(horaFim)) {
-    return res.status(400).json({ erro: true, mensagem: 'Formato de hora inválido. Use HH:MM.' });
-  }
-
-  // Validação 3: modalidade online exige link
-  if (modalidade === 'online' && !link_reuniao) {
-    return res.status(400).json({ erro: true, mensagem: 'Reuniões online exigem um link de acesso.' });
-  }
-
-  // Validação 4: pré-ata não pode exceder 600 caracteres
-  if (pre_ata && pre_ata.length > 600) {
-    return res.status(400).json({ erro: true, mensagem: 'A pré-ata não pode ultrapassar 600 caracteres.' });
-  }
-
-  // Validação 5: hora início antes de hora fim
-  if (horaParaMinutos(horaInicio) >= horaParaMinutos(horaFim)) {
-    return res.status(400).json({ erro: true, mensagem: 'A hora de início deve ser anterior ao término.' });
-  }
-
-  // Validação 6: conflito de sala apenas com reuniões PRESENCIAIS confirmadas
-  if (modalidade === 'presencial') {
-    const reservasDaData = db.prepare(`
-      SELECT * FROM reservas
-      WHERE data = ? AND status = 'confirmada' AND modalidade = 'presencial'
-    `).all(data);
-
-    const conflito = reservasDaData.find(r =>
-      temConflito(horaInicio, horaFim, r.horaInicio, r.horaFim)
-    );
-
-    if (conflito) {
-      return res.status(409).json({
-        erro: true,
-        tipoConflito: 'sala',
-        mensagem: `Conflito de horário! A sala já está ocupada por "${conflito.titulo}" das ${conflito.horaInicio} às ${conflito.horaFim}.`
-      });
+    if (!titulo || !data || !horaInicio || !horaFim) {
+      return res.status(400).json({ erro: true, mensagem: 'Todos os campos são obrigatórios.' });
     }
-  }
-
-  // Cria a reserva
-  const resultado = db.prepare(`
-    INSERT INTO reservas (usuario_id, titulo, data, horaInicio, horaFim, status, modalidade, link_reuniao, pre_ata)
-    VALUES (?, ?, ?, ?, ?, 'confirmada', ?, ?, ?)
-  `).run(
-    usuario_id, titulo, data, horaInicio, horaFim,
-    modalidade, link_reuniao || null,
-    pre_ata || null
-  );
-
-  const novaReserva = db.prepare(`
-    SELECT r.*, u.nome AS gestor,
-           0 AS confirmados, 0 AS euConfirmei
-    FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
-    WHERE r.id = ?
-  `).get(resultado.lastInsertRowid);
-
-  // Responde ao cliente antes de chamar o Notion (não bloqueia)
-  res.status(201).json({
-    erro: false,
-    mensagem: 'Reserva criada com sucesso!',
-    reserva: { ...novaReserva, statusDinamico: calcularStatusDinamico(novaReserva), euConfirmei: false }
-  });
-  notificarClientes();
-
-  // Envia para o Notion de forma assíncrona e salva o notion_page_id retornado
-  const statusParaNotion = calcularStatusDinamico(novaReserva);
-  criarPaginaNotion(novaReserva, [], statusParaNotion).then(notionPageId => {
-    if (notionPageId) {
-      db.prepare('UPDATE reservas SET notion_page_id = ?, notion_status_enviado = ? WHERE id = ?')
-        .run(notionPageId, statusParaNotion, novaReserva.id);
+    if (!isDataValida(data)) {
+      return res.status(400).json({ erro: true, mensagem: 'Formato de data inválido. Use YYYY-MM-DD.' });
     }
-  }).catch(() => { });
+    if (!isHoraValida(horaInicio) || !isHoraValida(horaFim)) {
+      return res.status(400).json({ erro: true, mensagem: 'Formato de hora inválido. Use HH:MM.' });
+    }
+    if (modalidade === 'online' && !link_reuniao) {
+      return res.status(400).json({ erro: true, mensagem: 'Reuniões online exigem um link de acesso.' });
+    }
+    if (pre_ata && pre_ata.length > 600) {
+      return res.status(400).json({ erro: true, mensagem: 'A pré-ata não pode ultrapassar 600 caracteres.' });
+    }
+    if (horaParaMinutos(horaInicio) >= horaParaMinutos(horaFim)) {
+      return res.status(400).json({ erro: true, mensagem: 'A hora de início deve ser anterior ao término.' });
+    }
+
+    if (modalidade === 'presencial') {
+      const reservasDaData = await pool.query(`
+        SELECT * FROM reservas
+        WHERE data = $1 AND status = 'confirmada' AND modalidade = 'presencial'
+      `, [data]);
+
+      const conflito = reservasDaData.rows.find(r =>
+        temConflito(horaInicio, horaFim, r.horaInicio, r.horaFim)
+      );
+
+      if (conflito) {
+        return res.status(409).json({
+          erro: true,
+          tipoConflito: 'sala',
+          mensagem: `Conflito de horário! A sala já está ocupada por "${conflito.titulo}" das ${conflito.horaInicio} às ${conflito.horaFim}.`
+        });
+      }
+    }
+
+    // Cria a reserva
+    const insertRes = await pool.query(`
+      INSERT INTO reservas (usuario_id, titulo, data, horaInicio, horaFim, status, modalidade, link_reuniao, pre_ata)
+      VALUES ($1, $2, $3, $4, $5, 'confirmada', $6, $7, $8)
+      RETURNING id
+    `, [usuario_id, titulo, data, horaInicio, horaFim, modalidade, link_reuniao || null, pre_ata || null]);
+
+    const novaId = insertRes.rows[0].id;
+
+    const novaReservaRes = await pool.query(`
+      SELECT r.*, u.nome AS gestor,
+             0 AS confirmados, 0 AS "euConfirmei"
+      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      WHERE r.id = $1
+    `, [novaId]);
+
+    const novaReserva = novaReservaRes.rows[0];
+
+    res.status(201).json({
+      erro: false,
+      mensagem: 'Reserva criada com sucesso!',
+      reserva: { ...novaReserva, statusDinamico: calcularStatusDinamico(novaReserva), euConfirmei: false, confirmados: 0, participantesNomes: [] }
+    });
+    notificarClientes();
+
+    // Envia para o Notion de forma assíncrona
+    const statusParaNotion = calcularStatusDinamico(novaReserva);
+    criarPaginaNotion(novaReserva, [], statusParaNotion).then(async notionPageId => {
+      if (notionPageId) {
+        await pool.query('UPDATE reservas SET notion_page_id = $1, notion_status_enviado = $2 WHERE id = $3', 
+                         [notionPageId, statusParaNotion, novaReserva.id]).catch(() => {});
+      }
+    }).catch(() => { });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: true, mensagem: 'Erro ao criar reserva' });
+  }
 });
 
 // ── PATCH /api/reservas/:id/cancelar ────────────────────────
-// Somente o criador pode cancelar, com motivo opcional.
-app.patch('/api/reservas/:id/cancelar', autenticar, (req, res) => {
-  const id = parseInt(req.params.id);
-  const { motivo } = req.body;
+app.patch('/api/reservas/:id/cancelar', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { motivo } = req.body;
 
-  const reserva = db.prepare('SELECT * FROM reservas WHERE id = ?').get(id);
-  if (!reserva) {
-    return res.status(404).json({ erro: true, mensagem: 'Reserva não encontrada.' });
-  }
+    const reservaRes = await pool.query('SELECT * FROM reservas WHERE id = $1', [id]);
+    const reserva = reservaRes.rows[0];
+    if (!reserva) {
+      return res.status(404).json({ erro: true, mensagem: 'Reserva não encontrada.' });
+    }
 
-  // Somente o criador pode cancelar
-  if (reserva.usuario_id !== req.usuario.id) {
-    return res.status(403).json({ erro: true, mensagem: 'Somente o criador da reunião pode cancelá-la.' });
-  }
+    if (reserva.usuario_id !== req.usuario.id) {
+      return res.status(403).json({ erro: true, mensagem: 'Somente o criador da reunião pode cancelá-la.' });
+    }
+    if (reserva.status === 'cancelada') {
+      return res.status(400).json({ erro: true, mensagem: 'Esta reunião já está cancelada.' });
+    }
 
-  if (reserva.status === 'cancelada') {
-    return res.status(400).json({ erro: true, mensagem: 'Esta reunião já está cancelada.' });
-  }
+    await pool.query('UPDATE reservas SET status = $1, motivo_cancelamento = $2 WHERE id = $3', 
+                     ['cancelada', motivo?.trim() || null, id]);
 
-  db.prepare('UPDATE reservas SET status = ?, motivo_cancelamento = ? WHERE id = ?')
-    .run('cancelada', motivo?.trim() || null, id);
+    notificarClientes();
+    res.json({ erro: false, mensagem: 'Reunião cancelada com sucesso.' });
 
-  notificarClientes();
-  res.json({ erro: false, mensagem: 'Reunião cancelada com sucesso.' });
-
-  // Atualiza status e motivo no Notion de forma assíncrona
-  console.log(`🔍 Debug cancelamento #${id}: notion_page_id = "${reserva.notion_page_id}", motivo = "${motivo?.trim() || '(vazio)'}"`);
-  if (reserva.notion_page_id) {
-    cancelarPaginaNotion(reserva.notion_page_id, motivo?.trim() || '')
-      .catch(err => console.error('Notion: erro ao atualizar cancelamento:', err.message));
-  } else {
-    console.warn(`⚠️  Reunião #${id} cancelada, mas sem notion_page_id — Notion não foi atualizado.`);
+    console.log(`🔍 Debug cancelamento #${id}: notion_page_id = "${reserva.notion_page_id}", motivo = "${motivo?.trim() || '(vazio)'}"`);
+    if (reserva.notion_page_id) {
+      cancelarPaginaNotion(reserva.notion_page_id, motivo?.trim() || '')
+        .catch(err => console.error('Notion: erro ao atualizar cancelamento:', err.message));
+    } else {
+      console.warn(`⚠️  Reunião #${id} cancelada, mas sem notion_page_id — Notion não foi atualizado.`);
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: true, mensagem: 'Erro interno ao cancelar' });
   }
 });
 
 // ── DELETE /api/reservas/:id ─────────────────────────────────
-app.delete('/api/reservas/:id', autenticar, (req, res) => {
-  const id = parseInt(req.params.id);
-  const reserva = db.prepare('SELECT * FROM reservas WHERE id = ?').get(id);
+app.delete('/api/reservas/:id', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const reservaRes = await pool.query('SELECT * FROM reservas WHERE id = $1', [id]);
+    const reserva = reservaRes.rows[0];
 
-  if (!reserva) {
-    return res.status(404).json({ erro: true, mensagem: 'Reserva não encontrada.' });
-  }
+    if (!reserva) {
+      return res.status(404).json({ erro: true, mensagem: 'Reserva não encontrada.' });
+    }
 
-  if (req.usuario.role !== 'admin' && reserva.usuario_id !== req.usuario.id) {
-    return res.status(403).json({ erro: true, mensagem: 'Você só pode cancelar suas próprias reservas.' });
-  }
+    if (req.usuario.role !== 'admin' && reserva.usuario_id !== req.usuario.id) {
+      return res.status(403).json({ erro: true, mensagem: 'Você só pode cancelar suas próprias reservas.' });
+    }
 
-  db.prepare('DELETE FROM reservas WHERE id = ?').run(id);
-  notificarClientes();
-  res.json({ erro: false, mensagem: 'Reserva cancelada com sucesso.' });
+    await pool.query('DELETE FROM reservas WHERE id = $1', [id]);
+    notificarClientes();
+    res.json({ erro: false, mensagem: 'Reserva apagada com sucesso.' });
 
-  // Arquiva a página no Notion de forma assíncrona (se existir)
-  if (reserva.notion_page_id) {
-    arquivarPaginaNotion(reserva.notion_page_id).catch(() => { });
+    if (reserva.notion_page_id) {
+      arquivarPaginaNotion(reserva.notion_page_id).catch(() => { });
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: true, mensagem: 'Erro interno' });
   }
 });
 
 // ── DELETE /api/reservas/multiplas ───────────────────────────
-// Somente Admin. Apaga múltiplas reuniões de uma vez.
-app.delete('/api/reservas/multiplas', autenticar, apenasAdmin, (req, res) => {
-  const { ids } = req.body;
+app.delete('/api/reservas/multiplas', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    const { ids } = req.body;
 
-  if (!ids || !Array.isArray(ids) || ids.length === 0) {
-    return res.status(400).json({ erro: true, mensagem: 'Nenhuma reserva selecionada.' });
-  }
-
-  // Busca as reservas antes de deletar para poder arquivar no Notion
-  const placeholders = ids.map(() => '?').join(',');
-  const reservasParaDeletar = db.prepare(`SELECT * FROM reservas WHERE id IN (${placeholders})`).all(ids);
-
-  if (reservasParaDeletar.length === 0) {
-    return res.status(404).json({ erro: true, mensagem: 'Nenhuma reserva encontrada para exclusão.' });
-  }
-
-  // Executa a exclusão no banco
-  db.prepare(`DELETE FROM reservas WHERE id IN (${placeholders})`).run(ids);
-  notificarClientes();
-
-  res.json({
-    erro: false,
-    mensagem: `${reservasParaDeletar.length} reunião(ões) apagada(s) com sucesso.`,
-    apagadas: reservasParaDeletar.length
-  });
-
-  // Arquiva as páginas no Notion de forma assíncrona
-  reservasParaDeletar.forEach(reserva => {
-    if (reserva.notion_page_id) {
-      arquivarPaginaNotion(reserva.notion_page_id).catch(() => { });
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ erro: true, mensagem: 'Nenhuma reserva selecionada.' });
     }
-  });
+
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
+    const reservasRes = await pool.query(`SELECT * FROM reservas WHERE id IN (${placeholders})`, ids);
+    const reservasParaDeletar = reservasRes.rows;
+
+    if (reservasParaDeletar.length === 0) {
+      return res.status(404).json({ erro: true, mensagem: 'Nenhuma reserva encontrada para exclusão.' });
+    }
+
+    await pool.query(`DELETE FROM reservas WHERE id IN (${placeholders})`, ids);
+    notificarClientes();
+
+    res.json({
+      erro: false,
+      mensagem: `${reservasParaDeletar.length} reunião(ões) apagada(s) com sucesso.`,
+      apagadas: reservasParaDeletar.length
+    });
+
+    reservasParaDeletar.forEach(reserva => {
+      if (reserva.notion_page_id) {
+        arquivarPaginaNotion(reserva.notion_page_id).catch(() => { });
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: true, mensagem: 'Erro ao remover multiplas' });
+  }
 });
 
 // ── PATCH /api/reservas/multiplas/cancelar ───────────────────
-// Somente Admin. Cancela múltiplas reuniões de uma vez com o mesmo motivo.
-app.patch('/api/reservas/multiplas/cancelar', autenticar, apenasAdmin, (req, res) => {
-  const { ids, motivo } = req.body;
+app.patch('/api/reservas/multiplas/cancelar', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    const { ids, motivo } = req.body;
 
-  if (!ids || !Array.isArray(ids) || ids.length === 0) {
-    return res.status(400).json({ erro: true, mensagem: 'Nenhuma reserva selecionada.' });
-  }
-
-  const placeholders = ids.map(() => '?').join(',');
-  const reservasParaCancelar = db.prepare(`SELECT * FROM reservas WHERE id IN (${placeholders})`).all(ids);
-
-  if (reservasParaCancelar.length === 0) {
-    return res.status(404).json({ erro: true, mensagem: 'Nenhuma reserva encontrada para cancelamento.' });
-  }
-
-  const justificativa = motivo?.trim() || null;
-  // Só podemos cancelar as que ainda não estão canceladas
-  db.prepare(`UPDATE reservas SET status = 'cancelada', motivo_cancelamento = ? WHERE id IN (${placeholders}) AND status != 'cancelada'`)
-    .run(justificativa, ...ids);
-  
-  notificarClientes();
-
-  res.json({
-    erro: false,
-    mensagem: `${reservasParaCancelar.length} reunião(ões) cancelada(s) com sucesso.`,
-    canceladas: reservasParaCancelar.length
-  });
-
-  // Atualiza também no Notion de forma assíncrona
-  reservasParaCancelar.forEach(reserva => {
-    if (reserva.status !== 'cancelada' && reserva.notion_page_id) {
-      cancelarPaginaNotion(reserva.notion_page_id, justificativa || '')
-        .catch(err => console.error('Notion: erro ao atualizar cancelamento em lote:', err.message));
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ erro: true, mensagem: 'Nenhuma reserva selecionada.' });
     }
-  });
+
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
+    const reservasRes = await pool.query(`SELECT * FROM reservas WHERE id IN (${placeholders})`, ids);
+    const reservasParaCancelar = reservasRes.rows;
+
+    if (reservasParaCancelar.length === 0) {
+      return res.status(404).json({ erro: true, mensagem: 'Nenhuma reserva encontrada para cancelamento.' });
+    }
+
+    const justificativa = motivo?.trim() || null;
+    
+    // Concatena o valor do status cancelada e o valor do motivo aos IDs
+    const currentParamsLength = ids.length;
+    await pool.query(
+      `UPDATE reservas SET status = 'cancelada', motivo_cancelamento = $${currentParamsLength + 1} WHERE id IN (${placeholders}) AND status != 'cancelada'`,
+      [...ids, justificativa]
+    );
+    
+    notificarClientes();
+
+    res.json({
+      erro: false,
+      mensagem: `${reservasParaCancelar.length} reunião(ões) cancelada(s) com sucesso.`,
+      canceladas: reservasParaCancelar.length
+    });
+
+    reservasParaCancelar.forEach(reserva => {
+      if (reserva.status !== 'cancelada' && reserva.notion_page_id) {
+        cancelarPaginaNotion(reserva.notion_page_id, justificativa || '')
+          .catch(err => console.error('Notion: erro ao atualizar cancelamento em lote:', err.message));
+      }
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: true, mensagem: 'Erro interno' });
+  }
 });
 
 // ── GET /api/notion/status ───────────────────────────────────
-// Informa ao frontend se a integração com o Notion está configurada.
 app.get('/api/notion/status', autenticar, (req, res) => {
   res.json({ configurado: notionConfigurado() });
 });
 
 // ── POST /api/notion/sync ────────────────────────────────────
-// Somente Admin. Sincroniza todas as reservas futuras (de hoje em diante) para o Notion.
 app.post('/api/notion/sync', autenticar, apenasAdmin, async (req, res) => {
-  const dataHoje = hoje();
-
-  const reservas = db.prepare(`
-    SELECT r.*, u.nome AS gestor,
-           (SELECT GROUP_CONCAT(u2.nome, '||') FROM presencas p2
-            JOIN usuarios u2 ON u2.id = p2.usuario_id
-            WHERE p2.reserva_id = r.id) AS participantesNomes
-    FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
-    WHERE r.data >= ?
-    ORDER BY r.data ASC, r.horaInicio ASC
-  `).all(dataHoje);
-
   try {
-    // Adiciona statusDinamico calculado a cada reserva antes de enviar ao Notion
-    const reservasComStatus = reservas.map(r => ({
-      ...r,
-      statusDinamico: calcularStatusDinamico(r),
-      participantesNomes: r.participantesNomes || null
-    }));
+    const dataHoje = hoje();
+
+    const reservasRes = await pool.query(`
+      SELECT r.*, u.nome AS gestor,
+             (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
+              JOIN usuarios u2 ON u2.id = p2.usuario_id
+              WHERE p2.reserva_id = r.id) AS "participantesNomes"
+      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      WHERE r.data >= $1
+      ORDER BY r.data ASC, r.horaInicio ASC
+    `, [dataHoje]);
+
+    const reservasComStatus = reservasRes.rows.map(r => {
+      const partNomes = r.participantesnomes || r.participantesNomes;
+      return {
+        ...r,
+        statusDinamico: calcularStatusDinamico(r),
+        participantesNomes: partNomes ? partNomes.split('||') : []
+      };
+    });
+
     const { criadas, atualizadas, novasIds } = await sincronizarTodasReservas(reservasComStatus);
 
-    // Salva no banco os notion_page_id das reservas recém-criadas no Notion
-    const stmtAtualizar = db.prepare(
-      'UPDATE reservas SET notion_page_id = ?, notion_status_enviado = ? WHERE id = ?'
-    );
     for (const { id, notionPageId, status } of novasIds) {
-      stmtAtualizar.run(notionPageId, status, id);
+      await pool.query('UPDATE reservas SET notion_page_id = $1, notion_status_enviado = $2 WHERE id = $3', 
+                       [notionPageId, status, id]);
     }
 
     const total = criadas + atualizadas;
@@ -688,143 +709,178 @@ app.post('/api/notion/sync', autenticar, apenasAdmin, async (req, res) => {
 });
 
 // ── PATCH /api/reservas/:id/presenca ──────────────────────────
-// Toggle RSVP: confirma ou remove presença do usuário logado.
-app.patch('/api/reservas/:id/presenca', autenticar, (req, res) => {
-  const reservaId = parseInt(req.params.id);
-  const usuarioId = req.usuario.id;
+app.patch('/api/reservas/:id/presenca', autenticar, async (req, res) => {
+  try {
+    const reservaId = parseInt(req.params.id);
+    const usuarioId = req.usuario.id;
 
-  const reserva = db.prepare('SELECT id FROM reservas WHERE id = ?').get(reservaId);
-  if (!reserva) return res.status(404).json({ erro: true, mensagem: 'Reserva não encontrada.' });
+    const resReserva = await pool.query('SELECT id FROM reservas WHERE id = $1', [reservaId]);
+    if (resReserva.rows.length === 0) return res.status(404).json({ erro: true, mensagem: 'Reserva não encontrada.' });
 
-  const jaConfirmou = db.prepare(
-    'SELECT id FROM presencas WHERE reserva_id = ? AND usuario_id = ?'
-  ).get(reservaId, usuarioId);
+    const presRes = await pool.query('SELECT id FROM presencas WHERE reserva_id = $1 AND usuario_id = $2', [reservaId, usuarioId]);
+    const jaConfirmou = presRes.rows.length > 0;
 
-  if (jaConfirmou) {
-    db.prepare('DELETE FROM presencas WHERE reserva_id = ? AND usuario_id = ?').run(reservaId, usuarioId);
-  } else {
-    db.prepare('INSERT INTO presencas (reserva_id, usuario_id) VALUES (?, ?)').run(reservaId, usuarioId);
-  }
+    if (jaConfirmou) {
+      await pool.query('DELETE FROM presencas WHERE reserva_id = $1 AND usuario_id = $2', [reservaId, usuarioId]);
+    } else {
+      await pool.query('INSERT INTO presencas (reserva_id, usuario_id) VALUES ($1, $2)', [reservaId, usuarioId]);
+    }
 
-  const confirmados = db.prepare(
-    'SELECT COUNT(*) AS total FROM presencas WHERE reserva_id = ?'
-  ).get(reservaId).total;
+    const confRes = await pool.query('SELECT COUNT(*) AS total FROM presencas WHERE reserva_id = $1', [reservaId]);
+    const confirmados = parseInt(confRes.rows[0].total, 10);
 
-  res.json({
-    erro: false,
-    confirmou: !jaConfirmou,
-    confirmados
-  });
-  notificarClientes();
+    res.json({
+      erro: false,
+      confirmou: !jaConfirmou,
+      confirmados
+    });
+    notificarClientes();
 
-  // Atualiza o campo "Confirmados" no Notion de forma assíncrona
-  const reservaCompleta = db.prepare('SELECT * FROM reservas WHERE id = ?').get(reservaId);
-  if (reservaCompleta?.notion_page_id) {
-    const nomes = db.prepare(`
-      SELECT u.nome FROM presencas p
-      JOIN usuarios u ON u.id = p.usuario_id
-      WHERE p.reserva_id = ?
-    `).all(reservaId).map(r => r.nome);
+    const compRes = await pool.query('SELECT * FROM reservas WHERE id = $1', [reservaId]);
+    const reservaCompleta = compRes.rows[0];
 
-    const statusAtual = calcularStatusDinamico(reservaCompleta);
-    atualizarPaginaNotion(reservaCompleta.notion_page_id, nomes, statusAtual)
-      .catch(err => console.error('Notion: erro ao atualizar confirmados:', err.message));
+    if (reservaCompleta?.notion_page_id) {
+      const nomesRes = await pool.query(`
+        SELECT u.nome FROM presencas p
+        JOIN usuarios u ON u.id = p.usuario_id
+        WHERE p.reserva_id = $1
+      `, [reservaId]);
+      
+      const nomes = nomesRes.rows.map(r => r.nome);
+      const statusAtual = calcularStatusDinamico(reservaCompleta);
+      atualizarPaginaNotion(reservaCompleta.notion_page_id, nomes, statusAtual)
+        .catch(err => console.error('Notion: erro ao atualizar confirmados:', err.message));
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: true, mensagem: 'Erro interno ao marcar presença' });
   }
 });
 
 // ── GET /api/historico ─────────────────────────────────────────
-// Admin: vê todas as reservas. Gestor: vê somente as suas.
-app.get('/api/historico', autenticar, (req, res) => {
-  const { id: usuarioId, role } = req.usuario;
-  let todas;
+app.get('/api/historico', autenticar, async (req, res) => {
+  try {
+    const { id: usuarioId, role } = req.usuario;
+    let historico;
 
-  if (role === 'admin') {
-    todas = db.prepare(`
-      SELECT r.*, u.nome AS gestor, u.email AS emailGestor,
-             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
-             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = ?) AS euConfirmei,
-             (SELECT GROUP_CONCAT(u2.nome, '||') FROM presencas p2
-              JOIN usuarios u2 ON u2.id = p2.usuario_id
-              WHERE p2.reserva_id = r.id) AS participantesNomes
-      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
-      ORDER BY r.data DESC, r.horaInicio ASC
-    `).all(usuarioId);
-  } else {
-    todas = db.prepare(`
-      SELECT r.*, u.nome AS gestor,
-             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
-             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = ?) AS euConfirmei,
-             (SELECT GROUP_CONCAT(u2.nome, '||') FROM presencas p2
-              JOIN usuarios u2 ON u2.id = p2.usuario_id
-              WHERE p2.reserva_id = r.id) AS participantesNomes
-      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
-      WHERE r.usuario_id = ?
-      ORDER BY r.data DESC, r.horaInicio ASC
-    `).all(usuarioId, usuarioId);
+    if (role === 'admin') {
+      const histRes = await pool.query(`
+        SELECT r.*, u.nome AS gestor, u.email AS "emailGestor",
+               (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
+               (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = $1) AS "euConfirmei",
+               (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
+                JOIN usuarios u2 ON u2.id = p2.usuario_id
+                WHERE p2.reserva_id = r.id) AS "participantesNomes"
+        FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+        ORDER BY r.data DESC, r.horaInicio ASC
+      `, [usuarioId]);
+      historico = histRes.rows;
+    } else {
+      const histRes = await pool.query(`
+        SELECT r.*, u.nome AS gestor,
+               (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
+               (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = $1) AS "euConfirmei",
+               (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
+                JOIN usuarios u2 ON u2.id = p2.usuario_id
+                WHERE p2.reserva_id = r.id) AS "participantesNomes"
+        FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+        WHERE r.usuario_id = $1
+        ORDER BY r.data DESC, r.horaInicio ASC
+      `, [usuarioId]);
+      historico = histRes.rows;
+    }
+
+    const comStatus = historico.map(r => {
+      const checkEuConfirmei = r.euconfirmei || r.euConfirmei;
+      const partNomes = r.participantesnomes || r.participantesNomes;
+      
+      return {
+        ...r,
+        statusDinamico: calcularStatusDinamico(r),
+        euConfirmei: parseInt(checkEuConfirmei, 10) > 0,
+        confirmados: parseInt(r.confirmados, 10),
+        participantesNomes: partNomes ? partNomes.split('||') : []
+      };
+    });
+    
+    res.json(comStatus);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: true, mensagem: 'Erro interno ao buscar historico' });
   }
-
-  const comStatus = todas.map(r => ({
-    ...r,
-    statusDinamico: calcularStatusDinamico(r),
-    euConfirmei: r.euConfirmei > 0,
-    participantesNomes: r.participantesNomes ? r.participantesNomes.split('||') : []
-  }));
-  res.json(comStatus);
 });
 
 // ── DELETE /api/historico/concluidas ─────────────────────────
-// Somente Admin. Apaga todas as reuniões com status 'Concluída'
-// (data anterior a hoje, ou hoje com horaFim já passada).
-app.delete('/api/historico/concluidas', autenticar, apenasAdmin, (req, res) => {
-  const agora = horaAtual();
-  const dataHoje = hoje();
+app.delete('/api/historico/concluidas', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    const agora = horaAtual();
+    const dataHoje = hoje();
 
-  const resultado = db.prepare(`
-    DELETE FROM reservas
-    WHERE data < ?
-       OR (data = ? AND horaFim <= ?)
-  `).run(dataHoje, dataHoje, agora);
+    const delRes = await pool.query(`
+      DELETE FROM reservas
+      WHERE data < $1
+         OR (data = $2 AND horaFim <= $3)
+    `, [dataHoje, dataHoje, agora]);
 
-  res.json({
-    erro: false,
-    mensagem: `${resultado.changes} reunião(ões) concluída(s) foram apagada(s).`,
-    apagadas: resultado.changes
-  });
-  notificarClientes();
+    res.json({
+      erro: false,
+      mensagem: `${delRes.rowCount} reunião(ões) concluída(s) foram apagada(s).`,
+      apagadas: delRes.rowCount
+    });
+    notificarClientes();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: true, mensagem: 'Erro interno ao excluir concluídas' });
+  }
 });
 
 // ── GET /api/estatisticas ────────────────────────────────────
-// Autenticado. Rankings de uso da sala.
-app.get('/api/estatisticas', autenticar, (req, res) => {
-  const rankingQuantidade = db.prepare(`
-    SELECT u.nome, COUNT(r.id) AS totalReservas
-    FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
-    WHERE r.status = 'confirmada'
-    GROUP BY r.usuario_id ORDER BY totalReservas DESC LIMIT 5
-  `).all();
+app.get('/api/estatisticas', autenticar, async (req, res) => {
+  try {
+    const rankQtd = await pool.query(`
+      SELECT u.nome, COUNT(r.id) AS "totalReservas"
+      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      WHERE r.status = 'confirmada'
+      GROUP BY r.usuario_id, u.nome
+      ORDER BY "totalReservas" DESC LIMIT 5
+    `);
 
-  const rankingTempo = db.prepare(`
-    SELECT u.nome,
-      SUM(
-        (CAST(SUBSTR(r.horaFim,   1, 2) AS INTEGER) * 60 + CAST(SUBSTR(r.horaFim,   4, 2) AS INTEGER)) -
-        (CAST(SUBSTR(r.horaInicio,1, 2) AS INTEGER) * 60 + CAST(SUBSTR(r.horaInicio,4, 2) AS INTEGER))
-      ) AS totalMinutos
-    FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
-    WHERE r.status = 'confirmada'
-    GROUP BY r.usuario_id ORDER BY totalMinutos DESC LIMIT 5
-  `).all();
+    // PostgreSQL SUBSTRING(X FROM Y FOR Z)
+    const rankTempo = await pool.query(`
+      SELECT u.nome,
+        SUM(
+          (CAST(SUBSTRING(r.horaFim FROM 1 FOR 2) AS INTEGER) * 60 + CAST(SUBSTRING(r.horaFim FROM 4 FOR 2) AS INTEGER)) -
+          (CAST(SUBSTRING(r.horaInicio FROM 1 FOR 2) AS INTEGER) * 60 + CAST(SUBSTRING(r.horaInicio FROM 4 FOR 2) AS INTEGER))
+        ) AS "totalMinutos"
+      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      WHERE r.status = 'confirmada'
+      GROUP BY r.usuario_id, u.nome 
+      ORDER BY "totalMinutos" DESC LIMIT 5
+    `);
 
-  const totais = db.prepare(`
-    SELECT
-      COUNT(*) AS totalReservas,
-      SUM(
-        (CAST(SUBSTR(horaFim,   1, 2) AS INTEGER) * 60 + CAST(SUBSTR(horaFim,   4, 2) AS INTEGER)) -
-        (CAST(SUBSTR(horaInicio,1, 2) AS INTEGER) * 60 + CAST(SUBSTR(horaInicio,4, 2) AS INTEGER))
-      ) AS totalMinutos
-    FROM reservas WHERE status = 'confirmada'
-  `).get();
+    const totais = await pool.query(`
+      SELECT
+        COUNT(*) AS "totalReservas",
+        SUM(
+          (CAST(SUBSTRING(horaFim FROM 1 FOR 2) AS INTEGER) * 60 + CAST(SUBSTRING(horaFim FROM 4 FOR 2) AS INTEGER)) -
+          (CAST(SUBSTRING(horaInicio FROM 1 FOR 2) AS INTEGER) * 60 + CAST(SUBSTRING(horaInicio FROM 4 FOR 2) AS INTEGER))
+        ) AS "totalMinutos"
+      FROM reservas WHERE status = 'confirmada'
+    `);
 
-  res.json({ rankingQuantidade, rankingTempo, totais });
+    res.json({
+      rankingQuantidade: rankQtd.rows.map(r => ({ ...r, totalReservas: parseInt(r.totalReservas || r.totalreservas, 10) })),
+      rankingTempo: rankTempo.rows.map(r => ({ ...r, totalMinutos: parseInt(r.totalMinutos || r.totalminutos, 10) })),
+      totais: {
+        totalReservas: parseInt(totais.rows[0].totalReservas || totais.rows[0].totalreservas, 10),
+        totalMinutos: parseInt(totais.rows[0].totalMinutos || totais.rows[0].totalminutos, 10)
+      }
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: true, mensagem: 'Erro ao buscar estatisticas' });
+  }
 });
 
 // ── Rota padrão ──────────────────────────────────────────────
@@ -836,58 +892,56 @@ app.get('*', (req, res) => {
 // 8.1 SINCRONIZAÇÃO PERIÓDICA DE STATUS COM O NOTION
 // ============================================================
 
-/**
- * Verifica todas as reservas que possuem notion_page_id e compara o status
- * atual (calculado dinamicamente) com o último status enviado ao Notion.
- * Se houver diferença, atualiza a página no Notion.
- *
- * Roda a cada 5 minutos após a inicialização do servidor.
- */
 async function sincronizarStatusNotion() {
   if (!notionConfigurado()) return;
 
-  const reservas = db.prepare(`
-    SELECT * FROM reservas
-    WHERE notion_page_id IS NOT NULL
-  `).all();
+  try {
+    const resReserva = await pool.query(`
+      SELECT * FROM reservas
+      WHERE notion_page_id IS NOT NULL
+    `);
+    const reservas = resReserva.rows;
 
-  if (reservas.length === 0) return;
+    if (reservas.length === 0) return;
 
-  let atualizadas = 0;
-  for (const r of reservas) {
-    const statusAtual = calcularStatusDinamico(r);
-    if (statusAtual !== r.notion_status_enviado) {
-      const ok = await atualizarStatusNotion(r.notion_page_id, statusAtual);
-      if (ok) {
-        db.prepare('UPDATE reservas SET notion_status_enviado = ? WHERE id = ?')
-          .run(statusAtual, r.id);
-        atualizadas++;
+    let atualizadas = 0;
+    for (const r of reservas) {
+      const statusAtual = calcularStatusDinamico(r);
+      if (statusAtual !== r.notion_status_enviado) {
+        const ok = await atualizarStatusNotion(r.notion_page_id, statusAtual);
+        if (ok) {
+          await pool.query('UPDATE reservas SET notion_status_enviado = $1 WHERE id = $2', [statusAtual, r.id]);
+          atualizadas++;
+        }
       }
     }
-  }
 
-  if (atualizadas > 0) {
-    console.log(`🔄 Notion: ${atualizadas} status atualizado(s) automaticamente.`);
+    if (atualizadas > 0) {
+      console.log(`🔄 Notion: ${atualizadas} status atualizado(s) automaticamente.`);
+    }
+  } catch (err) {
+    console.error("Erro na sync notion automática:", err);
   }
 }
 
 // ============================================================
 // 9. INICIALIZAÇÃO
 // ============================================================
-inicializarBanco();
 
-app.listen(PORT, () => {
-  console.log(`\n✅ Servidor Canaã Telecom v2.3 rodando!`);
-  console.log(`🌐 Acesse: http://localhost:${PORT}`);
-  console.log(`🔑 Admin: ti@canaatelecom.com.br\n`);
+inicializarBanco().then(() => {
+  app.listen(PORT, () => {
+    console.log(`\n✅ Servidor Canaã Telecom v3.0 (PostgreSQL) rodando!`);
+    console.log(`🌐 Acesse: http://localhost:${PORT}`);
+    console.log(`🔑 Admin: ti@canaatelecom.com.br\n`);
 
-  // Inicia o timer de sincronização de status com o Notion (a cada 5 minutos)
-  if (notionConfigurado()) {
-    // Roda a primeira vez após 1 minuto (aguarda o servidor estabilizar)
-    setTimeout(() => {
-      sincronizarStatusNotion();
-      setInterval(sincronizarStatusNotion, 5 * 60 * 1000);
-    }, 60 * 1000);
-    console.log('🔔 Notion: sincronização automática de status ativada (a cada 5 min).');
-  }
+    if (notionConfigurado()) {
+      setTimeout(() => {
+        sincronizarStatusNotion();
+        setInterval(sincronizarStatusNotion, 5 * 60 * 1000);
+      }, 60 * 1000);
+      console.log('🔔 Notion: sincronização automática de status ativada (a cada 5 min).');
+    }
+  });
+}).catch(err => {
+  console.error("❌ Falha fatal ao inicializar aplicação:", err);
 });
