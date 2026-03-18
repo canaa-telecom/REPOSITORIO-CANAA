@@ -540,7 +540,7 @@ function renderCartaoReserva(r) {
   const podeCancelar = criadorDaReuniao &&
     (r.statusDinamico === 'Agendada' || r.statusDinamico === 'Em andamento');
   const cancelBtn = podeCancelar ? `
-    <button onclick="solicitarCancelamento(${r.id}, '${escapeHtml(r.titulo).replace(/'/g, '&#39;')}')" title="Cancelar reunião"
+    <button onclick="solicitarCancelamento(${r.id}, '${escapeHtml(r.titulo)}')" title="Cancelar reunião"
       class="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-slate-300 dark:text-slate-600 hover:text-orange-500 dark:hover:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-colors">
       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
@@ -555,7 +555,7 @@ function renderCartaoReserva(r) {
 
   // Botão de exclusão — ícone pequeno, só para admin
   const deleteBtn = isAdmin ? `
-    <button onclick="cancelarReserva(${r.id}, '${escapeHtml(r.titulo).replace(/'/g, '&#39;')}')" title="Apagar reunião"
+    <button onclick="cancelarReserva(${r.id}, '${escapeHtml(r.titulo)}')" title="Apagar reunião"
       class="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>

@@ -560,35 +560,9 @@ app.patch('/api/reservas/:id/cancelar', autenticar, async (req, res) => {
   }
 });
 
-// ── DELETE /api/reservas/:id ─────────────────────────────────
-app.delete('/api/reservas/:id', autenticar, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-    const reservaRes = await pool.query('SELECT * FROM reservas WHERE id = $1', [id]);
-    const reserva = reservaRes.rows[0];
-
-    if (!reserva) {
-      return res.status(404).json({ erro: true, mensagem: 'Reserva não encontrada.' });
-    }
-
-    if (req.usuario.role !== 'admin' && reserva.usuario_id !== req.usuario.id) {
-      return res.status(403).json({ erro: true, mensagem: 'Você só pode cancelar suas próprias reservas.' });
-    }
-
-    await pool.query('DELETE FROM reservas WHERE id = $1', [id]);
-    notificarClientes();
-    res.json({ erro: false, mensagem: 'Reserva apagada com sucesso.' });
-
-    if (reserva.notion_page_id) {
-      arquivarPaginaNotion(reserva.notion_page_id).catch(() => { });
-    }
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ erro: true, mensagem: 'Erro interno' });
-  }
-});
-
 // ── DELETE /api/reservas/multiplas ───────────────────────────
+// IMPORTANTE: deve vir ANTES de DELETE /api/reservas/:id, senão o Express
+// interpreta "multiplas" como o parâmetro :id e a rota nunca é atingida.
 app.delete('/api/reservas/multiplas', autenticar, apenasAdmin, async (req, res) => {
   try {
     const { ids } = req.body;
@@ -622,6 +596,34 @@ app.delete('/api/reservas/multiplas', autenticar, apenasAdmin, async (req, res) 
   } catch (err) {
     console.error(err);
     res.status(500).json({ erro: true, mensagem: 'Erro ao remover multiplas' });
+  }
+});
+
+// ── DELETE /api/reservas/:id ─────────────────────────────────
+app.delete('/api/reservas/:id', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const reservaRes = await pool.query('SELECT * FROM reservas WHERE id = $1', [id]);
+    const reserva = reservaRes.rows[0];
+
+    if (!reserva) {
+      return res.status(404).json({ erro: true, mensagem: 'Reserva não encontrada.' });
+    }
+
+    if (req.usuario.role !== 'admin' && reserva.usuario_id !== req.usuario.id) {
+      return res.status(403).json({ erro: true, mensagem: 'Você só pode cancelar suas próprias reservas.' });
+    }
+
+    await pool.query('DELETE FROM reservas WHERE id = $1', [id]);
+    notificarClientes();
+    res.json({ erro: false, mensagem: 'Reserva apagada com sucesso.' });
+
+    if (reserva.notion_page_id) {
+      arquivarPaginaNotion(reserva.notion_page_id).catch(() => { });
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: true, mensagem: 'Erro interno' });
   }
 });
 
@@ -689,7 +691,7 @@ app.post('/api/notion/sync', autenticar, apenasAdmin, async (req, res) => {
               WHERE p2.reserva_id = r.id) AS "participantesNomes"
       FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
       WHERE r.data >= $1
-      ORDER BY r.data ASC, r.horaInicio ASC
+      ORDER BY r.data ASC, r.horainicio ASC
     `, [dataHoje]);
 
     const reservasComStatus = reservasRes.rows.map(r => {
@@ -788,7 +790,7 @@ app.get('/api/historico', autenticar, async (req, res) => {
                 JOIN usuarios u2 ON u2.id = p2.usuario_id
                 WHERE p2.reserva_id = r.id) AS "participantesNomes"
         FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
-        ORDER BY r.data DESC, r.horaInicio ASC
+        ORDER BY r.data DESC, r.horainicio ASC
       `, [usuarioId]);
       historico = histRes.rows;
     } else {
@@ -801,7 +803,7 @@ app.get('/api/historico', autenticar, async (req, res) => {
                 WHERE p2.reserva_id = r.id) AS "participantesNomes"
         FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
         WHERE r.usuario_id = $1
-        ORDER BY r.data DESC, r.horaInicio ASC
+        ORDER BY r.data DESC, r.horainicio ASC
       `, [usuarioId]);
       historico = histRes.rows;
     }
@@ -839,7 +841,7 @@ app.delete('/api/historico/concluidas', autenticar, apenasAdmin, async (req, res
     const delRes = await pool.query(`
       DELETE FROM reservas
       WHERE data < $1
-         OR (data = $2 AND horaFim <= $3)
+         OR (data = $2 AND horafim <= $3)
     `, [dataHoje, dataHoje, agora]);
 
     res.json({
