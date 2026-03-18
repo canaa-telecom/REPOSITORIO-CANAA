@@ -50,6 +50,18 @@ function init() {
   inputData.value = dataHoje;
   inputData.min = dataHoje;
 
+  // Carrega lista de usuários para o seletor de participantes
+  carregarUsuariosParticipantes();
+
+  // Fecha o dropdown de participantes ao clicar fora
+  document.addEventListener('click', (e) => {
+    const chips = document.getElementById('participantesChips');
+    const dropdown = document.getElementById('participantesDropdown');
+    if (chips && dropdown && !chips.contains(e.target) && !dropdown.contains(e.target)) {
+      dropdown.classList.add('hidden');
+    }
+  });
+
   // Carrega tudo
   carregarDashboard();
   carregarLista('proximos');
@@ -190,6 +202,11 @@ async function agendarReuniao(event) {
   const link_reuniao = document.getElementById('inputLink').value.trim() || null;
   const pre_ata = document.getElementById('inputPreAta').value.trim() || null;
 
+  // Coleta os IDs dos participantes selecionados
+  const participanteIds = Array.from(
+    document.querySelectorAll('.participante-check:checked')
+  ).map(el => parseInt(el.value));
+
   if (!titulo || !data || !horaInicio || !horaFim) {
     mostrarModal('aviso', 'Preencha todos os campos obrigatórios antes de confirmar.');
     return;
@@ -203,20 +220,20 @@ async function agendarReuniao(event) {
     const resposta = await fetch(`${URL_API}/reservas`, {
       method: 'POST',
       headers: headersAuth(),
-      body: JSON.stringify({ titulo, data, horaInicio, horaFim, modalidade, link_reuniao, pre_ata })
+      body: JSON.stringify({ titulo, data, horaInicio, horaFim, modalidade, link_reuniao, pre_ata, participanteIds })
     });
 
     if (checar401(resposta.status)) return;
     const resultado = await resposta.json();
 
     if (!resposta.ok) {
-      // Conflito de participante → aviso amarelo; outros erros → vermelho
       const tipo = resultado.tipoConflito === 'participante' ? 'aviso' : 'erro';
       mostrarModal(tipo, resultado.mensagem);
     } else {
       mostrarModal('sucesso', resultado.mensagem, true);
       document.getElementById('formReserva').reset();
       document.getElementById('boxLink').classList.add('hidden');
+      limparParticipantes();
       // Reseta o contador da pré-ata
       const contador = document.getElementById('contadorPreAta');
       if (contador) {
@@ -231,6 +248,83 @@ async function agendarReuniao(event) {
     console.error('Erro na requisição:', erro);
     mostrarModal('erro', 'Erro ao conectar com o servidor. Verifique se o backend está rodando.');
   }
+}
+
+// ------------------------------------------------------------
+// PARTICIPANTES — Seletor no formulário
+// ------------------------------------------------------------
+
+/** Busca todos os usuários do sistema e popula a lista de participantes */
+async function carregarUsuariosParticipantes() {
+  try {
+    const res = await fetch(`${URL_API}/usuarios`, { headers: headersAuth() });
+    if (!res.ok) return;
+    const usuarios = await res.json();
+
+    const lista = document.getElementById('participantesLista');
+    if (!lista) return;
+
+    lista.innerHTML = usuarios.map(u => `
+      <label class="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
+        <input type="checkbox" value="${u.id}" onchange="toggleParticipante(this, ${u.id}, '${escapeHtml(u.nome)}')"
+          class="participante-check w-4 h-4 accent-blue-600 cursor-pointer" />
+        <span class="text-xs text-slate-700 dark:text-slate-200">${escapeHtml(u.nome)}</span>
+      </label>
+    `).join('');
+  } catch (err) {
+    console.error('Erro ao carregar usuários:', err);
+  }
+}
+
+/** Adiciona ou remove um chip de participante na área de seleção */
+function toggleParticipante(checkbox, id, nome) {
+  const chipsContainer = document.getElementById('participantesChips');
+  const placeholder = document.getElementById('participantesPlaceholder');
+
+  if (checkbox.checked) {
+    // Cria chip
+    const chip = document.createElement('span');
+    chip.id = `chip-participante-${id}`;
+    chip.dataset.uid = id;
+    chip.className = 'flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 border border-blue-200 dark:border-blue-700/50';
+    chip.innerHTML = `${escapeHtml(nome)} <button type="button" onclick="removerParticipante(${id})" class="ml-0.5 text-blue-400 hover:text-red-500 transition-colors font-bold leading-none">×</button>`;
+    chipsContainer.appendChild(chip);
+  } else {
+    // Remove chip
+    document.getElementById(`chip-participante-${id}`)?.remove();
+  }
+
+  // Mostra/oculta placeholder
+  const temChips = chipsContainer.querySelectorAll('[data-uid]').length > 0;
+  if (placeholder) placeholder.classList.toggle('hidden', temChips);
+}
+
+/** Remove um participante desmarcando o checkbox e eliminando o chip */
+function removerParticipante(id) {
+  document.getElementById(`chip-participante-${id}`)?.remove();
+  const checkbox = document.querySelector(`.participante-check[value="${id}"]`);
+  if (checkbox) checkbox.checked = false;
+
+  const chipsContainer = document.getElementById('participantesChips');
+  const placeholder = document.getElementById('participantesPlaceholder');
+  const temChips = chipsContainer?.querySelectorAll('[data-uid]').length > 0;
+  if (placeholder) placeholder.classList.toggle('hidden', temChips);
+}
+
+/** Limpa todos os participantes selecionados (usado após o agendamento) */
+function limparParticipantes() {
+  // Desmarca todos os checkboxes
+  document.querySelectorAll('.participante-check').forEach(cb => cb.checked = false);
+  // Remove chips
+  const chipsContainer = document.getElementById('participantesChips');
+  if (chipsContainer) {
+    chipsContainer.querySelectorAll('[data-uid]').forEach(c => c.remove());
+  }
+  // Mostra placeholder
+  const placeholder = document.getElementById('participantesPlaceholder');
+  if (placeholder) placeholder.classList.remove('hidden');
+  // Fecha dropdown
+  document.getElementById('participantesDropdown')?.classList.add('hidden');
 }
 
 // ------------------------------------------------------------
@@ -253,13 +347,14 @@ async function carregarDashboard() {
       banner.className = `${bannerBase} bg-emerald-500/10 border-emerald-400/20 text-emerald-400`;
       bannerTit.textContent = 'SALA LIVRE';
       bannerDet.textContent = status.proximaReuniao
-        ? `Próxima reunião presencial às ${status.proximaReuniao.horaInicio}`
+        ? `Próxima reunião presencial às ${status.proximaReuniao.horainicio || status.proximaReuniao.horaInicio}`
         : 'Nenhuma reunião presencial em andamento';
       bannerDot.className = 'w-2 h-2 rounded-full bg-emerald-400 status-dot-green flex-shrink-0';
     } else {
       banner.className = `${bannerBase} bg-red-600/10 border-red-400/20 text-red-400`;
       bannerTit.textContent = `SALA OCUPADA 🚫 ${status.reservaAtiva?.titulo || ''}`;
-      bannerDet.textContent = `Uso presencial por ${status.reservaAtiva?.gestor || '—'} até ${status.reservaAtiva?.horaFim || '—'}`;
+      const raFim = status.reservaAtiva?.horafim || status.reservaAtiva?.horaFim || '—';
+      bannerDet.textContent = `Uso presencial por ${status.reservaAtiva?.gestor || '—'} até ${raFim}`;
       bannerDot.className = 'w-2 h-2 rounded-full bg-red-400 status-dot-red flex-shrink-0';
     }
 
@@ -268,10 +363,13 @@ async function carregarDashboard() {
     if (bannerOnline) {
       const online = status.reuniaoOnlineAtiva;
       if (online) {
+        // PostgreSQL retorna em minúsculas; normaliza para os dois formatos
+        const oIni = online.horainicio || online.horaInicio || '—';
+        const oFim = online.horafim   || online.horaFim   || '—';
         bannerOnline.classList.remove('hidden');
         document.getElementById('bannerOnlineTitulo').textContent = online.titulo;
         document.getElementById('bannerOnlineGestor').textContent = `por ${online.gestor}`;
-        document.getElementById('bannerOnlineHorarioTexto').textContent = `${online.horaInicio} → ${online.horaFim}`;
+        document.getElementById('bannerOnlineHorarioTexto').textContent = `${oIni} → ${oFim}`;
         const linkEl = document.getElementById('bannerOnlineLink');
         if (online.link_reuniao) {
           linkEl.href = online.link_reuniao;
@@ -328,7 +426,8 @@ async function carregarDashboard() {
     } else if (status.reuniaoOnlineAtiva) {
       cardTitulo.textContent = `🟣 ${status.reuniaoOnlineAtiva.titulo}`;
     } else if (status.proximaReuniao) {
-      cardTitulo.textContent = `Próx: ${status.proximaReuniao.horaInicio}`;
+      const pIni = status.proximaReuniao.horainicio || status.proximaReuniao.horaInicio || '—';
+      cardTitulo.textContent = `Próx: ${pIni}`;
     } else {
       cardTitulo.textContent = 'Nenhuma';
     }
@@ -516,24 +615,18 @@ function renderCartaoReserva(r) {
       <p class="text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 leading-relaxed whitespace-pre-wrap border border-slate-100 dark:border-white/5">${escapeHtml(r.pre_ata)}</p>
     </div>` : '';
 
-  // RSVP — ícone + contagem inline
-  const rsvpSection = podeConfirmar ? `
-    <button id="rsvp-btn-${r.id}" onclick="confirmarPresenca(${r.id}, ${criadorDaReuniao})" title="${euConfirmei ? 'Cancelar presença' : 'Confirmar presença'}"
-      class="flex-shrink-0 flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold transition-all border
-      ${euConfirmei
-      ? 'bg-emerald-50 border-emerald-200 text-emerald-600 dark:bg-emerald-900/30 dark:border-emerald-700/40 dark:text-emerald-400 hover:bg-red-50 hover:border-red-200 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:border-red-700/40 dark:hover:text-red-400'
-      : 'bg-transparent border-slate-200 text-slate-400 dark:border-white/10 dark:text-slate-500 hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-600 dark:hover:bg-emerald-900/20 dark:hover:border-emerald-700/40 dark:hover:text-emerald-400'}">
-      <svg class="w-2.5 h-2.5" fill="${euConfirmei ? 'currentColor' : 'none'}" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
-      </svg>
-      <span id="rsvp-count-${r.id}">${confirmados}</span>
-    </button>` : (confirmados > 0 ? `
-    <span class="flex-shrink-0 text-[10px] text-slate-400 dark:text-slate-500">✓ <span id="rsvp-count-${r.id}">${confirmados}</span></span>` : `<span id="rsvp-count-${r.id}" class="hidden"></span>`);
+  // Contagem de participantes — exibe apenas ícone + número, sem botão de RSVP
+  const rsvpSection = confirmados > 0
+    ? `<span class="flex-shrink-0 flex items-center gap-1 text-[10px] text-slate-400 dark:text-slate-500">
+        <svg class="w-2.5 h-2.5 text-emerald-500" fill="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+        <span id="rsvp-count-${r.id}">${confirmados}</span>
+      </span>`
+    : `<span id="rsvp-count-${r.id}" class="hidden"></span>`;
 
-  // Nomes dos participantes — só para o criador, em linha discreta abaixo
-  const nomesHtml = (criadorDaReuniao && participantes.length > 0) ? `
+  // Nomes dos participantes — visível para todos
+  const nomesHtml = participantes.length > 0 ? `
     <div id="rsvp-nomes-${r.id}" class="flex flex-wrap gap-1 px-3 pb-1.5">
-      ${participantes.map(n => `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 font-medium">${escapeHtml(n)}</span>`).join('')}
+      ${participantes.map(n => `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 font-medium">${escapeHtml(n)}</span>`).join('')}
     </div>` : `<div id="rsvp-nomes-${r.id}"></div>`;
 
   // Botão de cancelar — somente o criador, só quando a reunião ainda pode ser cancelada

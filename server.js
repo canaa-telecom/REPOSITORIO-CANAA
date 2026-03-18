@@ -7,6 +7,7 @@ const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { criarPaginaNotion, atualizarStatusNotion, atualizarPaginaNotion, cancelarPaginaNotion, arquivarPaginaNotion, sincronizarTodasReservas, notionConfigurado } = require('./notion');
+const { enviarConviteReuniao } = require('./email');
 
 // ── 2. CONFIGURAÇÃO ─────────────────────────────────────────
 const app = express();
@@ -436,7 +437,7 @@ app.post('/api/reservas', autenticar, async (req, res) => {
     const {
       titulo, data, horaInicio, horaFim,
       modalidade = 'presencial', link_reuniao,
-      pre_ata
+      pre_ata, participanteIds = []
     } = req.body;
     const usuario_id = req.usuario.id;
 
@@ -491,9 +492,29 @@ app.post('/api/reservas', autenticar, async (req, res) => {
 
     const novaId = insertRes.rows[0].id;
 
+    // Insere participantes na tabela presencas (garante unicidade e ignora duplicatas)
+    const idsValidos = Array.isArray(participanteIds)
+      ? participanteIds.map(id => parseInt(id)).filter(id => !isNaN(id))
+      : [];
+
+    for (const pid of idsValidos) {
+      await pool.query(
+        'INSERT INTO presencas (reserva_id, usuario_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [novaId, pid]
+      );
+    }
+
+    // Busca nomes dos participantes para retornar ao frontend
+    const nomesRes = await pool.query(`
+      SELECT u.nome FROM presencas p
+      JOIN usuarios u ON u.id = p.usuario_id
+      WHERE p.reserva_id = $1
+    `, [novaId]);
+    const participantesNomes = nomesRes.rows.map(r => r.nome);
+
     const novaReservaRes = await pool.query(`
       SELECT r.*, u.nome AS gestor,
-             0 AS confirmados, 0 AS "euConfirmei"
+             ${idsValidos.length} AS confirmados, 0 AS "euConfirmei"
       FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
       WHERE r.id = $1
     `, [novaId]);
@@ -503,13 +524,45 @@ app.post('/api/reservas', autenticar, async (req, res) => {
     res.status(201).json({
       erro: false,
       mensagem: 'Reserva criada com sucesso!',
-      reserva: { ...novaReserva, statusDinamico: calcularStatusDinamico(novaReserva), euConfirmei: false, confirmados: 0, participantesNomes: [] }
+      reserva: {
+        ...novaReserva,
+        statusDinamico: calcularStatusDinamico(novaReserva),
+        euConfirmei: false,
+        confirmados: idsValidos.length,
+        participantesNomes
+      }
     });
     notificarClientes();
 
+    // Envia e-mails de convite para cada participante de forma assíncrona
+    if (idsValidos.length > 0) {
+      // Busca nome + email de cada participante
+      pool.query(
+        `SELECT id, nome, email FROM usuarios WHERE id = ANY($1::int[])`,
+        [idsValidos]
+      ).then(({ rows: participantesInfo }) => {
+        const horaInicio = novaReserva.horainicio || novaReserva.horaInicio;
+        const horaFim = novaReserva.horafim || novaReserva.horaFim;
+        for (const p of participantesInfo) {
+          enviarConviteReuniao({
+            emailDestinatario: p.email,
+            nomeParticipante: p.nome,
+            tituloReuniao: novaReserva.titulo,
+            data: novaReserva.data,
+            horaInicio,
+            horaFim,
+            modalidade: novaReserva.modalidade,
+            linkReuniao: novaReserva.link_reuniao || null,
+            nomeOrganizador: novaReserva.gestor,
+            preAta: novaReserva.pre_ata || null
+          });
+        }
+      }).catch(err => console.error('E-mail: erro ao buscar participantes:', err.message));
+    }
+
     // Envia para o Notion de forma assíncrona
     const statusParaNotion = calcularStatusDinamico(novaReserva);
-    criarPaginaNotion(novaReserva, [], statusParaNotion).then(async notionPageId => {
+    criarPaginaNotion(novaReserva, participantesNomes, statusParaNotion).then(async notionPageId => {
       if (notionPageId) {
         await pool.query('UPDATE reservas SET notion_page_id = $1, notion_status_enviado = $2 WHERE id = $3',
           [notionPageId, statusParaNotion, novaReserva.id]).catch(() => { });
@@ -521,6 +574,8 @@ app.post('/api/reservas', autenticar, async (req, res) => {
     res.status(500).json({ erro: true, mensagem: 'Erro ao criar reserva' });
   }
 });
+
+
 
 // ── PATCH /api/reservas/:id/cancelar ────────────────────────
 app.patch('/api/reservas/:id/cancelar', autenticar, async (req, res) => {
@@ -671,6 +726,17 @@ app.patch('/api/reservas/multiplas/cancelar', autenticar, apenasAdmin, async (re
   } catch (err) {
     console.error(err);
     res.status(500).json({ erro: true, mensagem: 'Erro interno' });
+  }
+});
+
+// ── GET /api/usuarios ────────────────────────────────────────
+app.get('/api/usuarios', autenticar, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT id, nome FROM usuarios ORDER BY nome ASC');
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: true, mensagem: 'Erro ao buscar usuários' });
   }
 });
 
