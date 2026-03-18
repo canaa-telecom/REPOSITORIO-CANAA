@@ -131,7 +131,6 @@ async function inicializarBanco() {
       const demos = [
         [adminId, 'Planejamento Q3', dataHoje, '08:00', '09:30', 'confirmada', 'presencial', null],
         [adminId, 'Daily Standup', dataHoje, '10:00', '11:00', 'confirmada', 'presencial', null],
-        [adminId, 'Reunião com Fornecedor', dataHoje, '14:00', '15:00', 'pendente', 'presencial', null],
         [adminId, 'Review de Sprint (Online)', dataHoje, '16:00', '17:00', 'confirmada', 'online', 'https://meet.google.com/abc-defg-hij'],
       ];
 
@@ -183,6 +182,13 @@ async function migrarBanco() {
     if (!colunas.includes('motivo_cancelamento')) {
       await pool.query("ALTER TABLE reservas ADD COLUMN motivo_cancelamento TEXT");
       console.log('✅ Migração: coluna motivo_cancelamento adicionada');
+    }
+
+    // Remove registros com status 'pendente' que possam ter sido criados pelo seed antigo
+    const pendentesRes = await pool.query("SELECT COUNT(*) FROM reservas WHERE status = 'pendente'");
+    if (parseInt(pendentesRes.rows[0].count) > 0) {
+      await pool.query("DELETE FROM reservas WHERE status = 'pendente'");
+      console.log('✅ Migração: registros com status pendente removidos');
     }
   } catch (err) {
     console.error("❌ Erro durante a migração do banco:", err);
@@ -391,6 +397,7 @@ app.get('/api/status', async (req, res) => {
 app.get('/api/reservas', autenticar, async (req, res) => {
   try {
     const dataHoje = hoje();
+    const agora    = horaAtual();
     const usuarioId = req.usuario.id;
 
     const reservasRes = await pool.query(`
@@ -402,12 +409,15 @@ app.get('/api/reservas', autenticar, async (req, res) => {
               JOIN usuarios u2 ON u2.id = p2.usuario_id
               WHERE p2.reserva_id = r.id) AS "participantesNomes"
       FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
-      WHERE r.data >= $2
+      WHERE r.status = 'confirmada'
+        AND (
+          r.data > $2
+          OR (r.data = $2 AND r.horafim > $3)
+        )
       ORDER BY r.data ASC, r.horainicio ASC
-    `, [usuarioId, dataHoje]);
+    `, [usuarioId, dataHoje, agora]);
 
     const comStatus = reservasRes.rows.map(r => {
-      // PostgreSQL retorna colunas em minúsculas; normalizamos para camelCase
       const checkEuConfirmei = r.euconfirmei ?? r.euConfirmei;
       const partNomes = r.participantesnomes || r.participantesNomes;
       const horaInicio = r.horainicio || r.horaInicio;
@@ -428,6 +438,46 @@ app.get('/api/reservas', autenticar, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ erro: true, mensagem: 'Erro interno do servidor' });
+  }
+});
+
+
+// ── GET /api/historico ───────────────────────────────────────
+app.get('/api/historico', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    const dataHoje = hoje();
+    const agora    = horaAtual();
+
+    const result = await pool.query(`
+      SELECT r.*,
+             u.nome AS gestor,
+             (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
+              JOIN usuarios u2 ON u2.id = p2.usuario_id
+              WHERE p2.reserva_id = r.id) AS "participantesNomes"
+      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      WHERE r.status = 'cancelada'
+         OR (r.status = 'confirmada' AND r.data < $1)
+         OR (r.status = 'confirmada' AND r.data = $1 AND r.horafim <= $2)
+      ORDER BY r.data DESC, r.horainicio DESC
+    `, [dataHoje, agora]);
+
+    const comStatus = result.rows.map(r => {
+      const horaInicio = r.horainicio || r.horaInicio;
+      const horaFim    = r.horafim    || r.horaFim;
+      const partNomes  = r.participantesnomes || r.participantesNomes;
+      return {
+        ...r,
+        horaInicio,
+        horaFim,
+        statusDinamico: calcularStatusDinamico(r),
+        participantesNomes: partNomes ? partNomes.split('||') : []
+      };
+    });
+
+    res.json(comStatus);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: true, mensagem: 'Erro interno ao buscar histórico' });
   }
 });
 
@@ -1017,7 +1067,7 @@ async function sincronizarStatusNotion() {
 // ============================================================
 
 inicializarBanco().then(() => {
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`\n✅ Servidor Canaã Telecom v3.0 (PostgreSQL) rodando!`);
     console.log(`🌐 Acesse: http://localhost:${PORT}`);
     console.log(`🔑 Admin: ti@canaatelecom.com.br\n`);
@@ -1030,6 +1080,35 @@ inicializarBanco().then(() => {
       console.log('🔔 Notion: sincronização automática de status ativada (a cada 5 min).');
     }
   });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n❌ A porta ${PORT} já está em uso!`);
+      console.error(`   Encerre o outro servidor antes de iniciar um novo.`);
+      console.error(`   Dica: Stop-Process -Name "node" -Force\n`);
+      process.exit(1);
+    } else {
+      throw err;
+    }
+  });
+
+  // Shutdown gracioso — libera a porta imediatamente quando o nodemon reiniciar
+  function fecharServidor(sinal) {
+    console.log(`\n🛑 Sinal ${sinal} recebido. Encerrando servidor...`);
+    server.close(() => {
+      pool.end(() => {
+        console.log('✅ Servidor encerrado com sucesso.');
+        process.exit(0);
+      });
+    });
+    // Força encerramento após 5s caso algo trave
+    setTimeout(() => process.exit(1), 5000).unref();
+  }
+
+  process.on('SIGTERM', () => fecharServidor('SIGTERM'));
+  process.on('SIGINT',  () => fecharServidor('SIGINT'));
+
 }).catch(err => {
   console.error("❌ Falha fatal ao inicializar aplicação:", err);
+  process.exit(1);
 });

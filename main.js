@@ -4,6 +4,41 @@ const URL_API = `${window.location.origin}/api`;
 // Aba ativa na lista de agendamentos
 let abaAtiva = 'proximos';
 
+// ── Controle de requisições concorrentes ─────────────────────
+const _abort = { dashboard: null, lista: null, analytics: null };
+
+function abortarESolicitar(chave) {
+  if (_abort[chave]) { _abort[chave].abort(); }
+  _abort[chave] = new AbortController();
+  return _abort[chave].signal;
+}
+
+// Cache do último conteúdo renderizado — evita re-render desnecessário
+const _cacheJson = { dashboard: null, proximos: null, historico: null, analytics: null };
+
+// Controla se a lista já teve sua primeira carga (evita "Carregando..." em background)
+const _listaCarregada = { proximos: false, historico: false };
+
+// Referência única de conexão SSE — evita acúmulo ao pressionar F5
+let _sseConexao = null;
+
+// Debounce do SSE — atualiza apenas dashboard e analytics em background.
+// A lista SÓ muda quando o usuário cria/cancela/apaga uma reunião, não por polling.
+let _sseDebounceTimer = null;
+function dispararAtualizacao({ incluirLista = false } = {}) {
+  clearTimeout(_sseDebounceTimer);
+  _sseDebounceTimer = setTimeout(() => {
+    carregarDashboard();
+    carregarAnalytics();
+    if (incluirLista) carregarLista(abaAtiva, false); // false = background, sem flash
+  }, 300);
+}
+
+// Fecha a conexão SSE ao sair da página
+window.addEventListener('beforeunload', () => {
+  if (_sseConexao) { _sseConexao.close(); _sseConexao = null; }
+});
+
 // 1. AUTENTICAÇÃO
 
 function obterToken() { return localStorage.getItem('canaa_token'); }
@@ -466,21 +501,31 @@ function trocarAba(aba) {
     if (cabecalho) cabecalho.classList.add('hidden');
   }
 
-  carregarLista(aba);
+  carregarLista(aba, true); // true = é troca de aba, mostra "Carregando..."
 }
 
 // ------------------------------------------------------------
 // 9. CARREGAR LISTA DE RESERVAS
 // ------------------------------------------------------------
 
-/** Carrega a lista de acordo com a aba: 'proximos' ou 'historico' */
-async function carregarLista(aba) {
+/** Carrega a lista de acordo com a aba: 'proximos' ou 'historico'
+ *  @param {string} aba - 'proximos' ou 'historico'
+ *  @param {boolean} [primeiro=true] - se true, mostra "Carregando..." (troca de aba / primeira carga)
+ */
+async function carregarLista(aba, primeiro) {
+  if (primeiro === undefined) primeiro = !_listaCarregada[aba];
+
   const lista = document.getElementById('listaReservas');
-  lista.innerHTML = '<div class="text-center py-8 text-slate-400 text-sm">Carregando...</div>';
+  const signal = abortarESolicitar('lista');
+
+  // Só mostra "Carregando..." na primeira carga ou troca de aba — NUNCA em atualizações silenciosas
+  if (primeiro) {
+    lista.innerHTML = '<div class="text-center py-8 text-slate-400 text-sm">Carregando...</div>';
+  }
 
   try {
     const endpoint = aba === 'historico' ? `${URL_API}/historico` : `${URL_API}/reservas`;
-    const res = await fetch(endpoint, { headers: headersAuth() });
+    const res = await fetch(endpoint, { headers: headersAuth(), signal });
 
     if (checar401(res.status)) return;
 
@@ -490,22 +535,23 @@ async function carregarLista(aba) {
     }
 
     const reservas = await res.json();
-    lista.innerHTML = '';
+    const novoJson = JSON.stringify(reservas);
 
-    if (reservas.length === 0) {
-      lista.innerHTML = `<div class="text-center py-8 text-slate-400 text-sm">Nenhum agendamento encontrado.</div>`;
-      return;
-    }
+    // Se os dados não mudaram, não toca no DOM — evita qualquer piscar
+    if (novoJson === _cacheJson[aba]) return;
+    _cacheJson[aba] = novoJson;
+    _listaCarregada[aba] = true;
 
-    lista.innerHTML = reservas.map(r =>
-      aba === 'historico' ? renderCartaoHistorico(r) : renderCartaoReserva(r)
-    ).join('');
+    lista.innerHTML = reservas.length === 0
+      ? `<div class="text-center py-8 text-slate-400 text-sm">Nenhum agendamento encontrado.</div>`
+      : reservas.map(r => aba === 'historico' ? renderCartaoHistorico(r) : renderCartaoReserva(r)).join('');
 
     inicializarAcoesLote();
-    atualizarBarraAcaoLote(); // Reset no render
+    atualizarBarraAcaoLote();
   } catch (err) {
+    if (err.name === 'AbortError') return; // Cancelado intencionalmente
     console.error('Erro ao carregar lista:', err);
-    lista.innerHTML = `<div class="text-center py-8 text-red-400 text-sm">Erro ao carregar lista.</div>`;
+    if (primeiro) lista.innerHTML = `<div class="text-center py-8 text-red-400 text-sm">Erro ao carregar lista.</div>`;
   }
 }
 
@@ -522,11 +568,14 @@ function renderCartaoHistorico(r) {
   const isAdmin = usuario?.role === 'admin';
   const titulo = escapeHtml(r.titulo);
   const data = formatarData(r.data);
+  // Normaliza colunas que o PostgreSQL retorna em minúsculas
+  const horaIni = r.horainicio || r.horaInicio || '—';
+  const horaFi  = r.horafim    || r.horaFim    || '—';
   const badgesHistorico = {
-    'Concluída': '<span class="text-xs font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-white/5 px-2 py-0.5 rounded-full flex-shrink-0">Concluída</span>',
-    'Cancelada': '<span class="text-xs font-semibold text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded-full flex-shrink-0 line-through">Cancelada</span>',
-    'Em andamento': '<span class="text-xs font-semibold text-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-full flex-shrink-0">Em andamento</span>',
-    'Agendada': '<span class="text-xs font-semibold text-blue-500 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-full flex-shrink-0">Agendada</span>',
+    'Concluída':    '<span class="text-xs font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-white/5 px-2 py-0.5 rounded-full flex-shrink-0">Concluída</span>',
+    'Cancelada':   '<span class="text-xs font-semibold text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded-full flex-shrink-0 line-through">Cancelada</span>',
+    'Em andamento':'<span class="text-xs font-semibold text-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-full flex-shrink-0">Em andamento</span>',
+    'Agendada':    '<span class="text-xs font-semibold text-blue-500 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-full flex-shrink-0">Agendada</span>',
   };
   const badge = badgesHistorico[r.statusDinamico] || badgesHistorico['Concluída'];
   const motivoHtml = (r.statusDinamico === 'Cancelada' && r.motivo_cancelamento) ? `
@@ -542,7 +591,7 @@ function renderCartaoHistorico(r) {
         </label>` : ''}
         <div class="flex-1 min-w-0">
           <p class="text-sm font-semibold dark:text-slate-100 truncate ${r.statusDinamico === 'Cancelada' ? 'line-through opacity-60' : ''}">${titulo}</p>
-          <p class="text-xs text-slate-400 font-mono">${data} &nbsp;${r.horaInicio}<span class="text-slate-300 dark:text-slate-600"> → </span>${r.horaFim}</p>
+          <p class="text-xs text-slate-400 font-mono">${data} &nbsp;${horaIni}<span class="text-slate-300 dark:text-slate-600"> → </span>${horaFi}</p>
         </div>
         ${badge}
       </div>
@@ -779,8 +828,9 @@ async function executarCancelamento(id, motivo) {
 
     if (res.ok) {
       mostrarModal('sucesso', dados.mensagem, true);
+      invalidarCacheLista(); // Força re-render na próxima chamada
       carregarDashboard();
-      carregarLista(abaAtiva);
+      carregarLista(abaAtiva, true);
       carregarAnalytics();
     } else {
       mostrarModal('erro', dados.mensagem || 'Erro ao cancelar a reunião.');
@@ -1174,18 +1224,25 @@ async function apagarSelecionadas() {
 
 /** Conecta ao endpoint SSE e recarrega os dados ao receber eventos */
 function iniciarSSE() {
-  const sse = new EventSource(`${URL_API.replace('/api', '')}/api/eventos`);
+  // Fecha conexão anterior antes de criar nova (evita acúmulo ao pressionar F5)
+  if (_sseConexao) { _sseConexao.close(); _sseConexao = null; }
 
-  sse.addEventListener('atualizacao', () => {
-    carregarDashboard();
-    carregarLista(abaAtiva);
-    carregarAnalytics();
+  _sseConexao = new EventSource(`${URL_API.replace('/api', '')}/api/eventos`);
+
+  _sseConexao.addEventListener('atualizacao', () => {
+    // Evento SSE = algo mudou no banco (nova reunião, cancelamento etc)
+    // Inclui lista pois o conteúdo pode ter mudado por ação de outro usuário
+    dispararAtualizacao({ incluirLista: true });
   });
 
-  sse.onerror = () => {
-    // O EventSource reconecta automaticamente — apenas loga o erro sem alertar
+  _sseConexao.onerror = () => {
     console.warn('SSE: conexão perdida, aguardando reconexão automática...');
   };
+}
+
+/** Invalida o cache de uma aba e força a próxima carga a renderizar de novo */
+function invalidarCacheLista(aba) {
+  if (aba) { _cacheJson[aba] = null; } else { _cacheJson.proximos = null; _cacheJson.historico = null; }
 }
 
 // ------------------------------------------------------------
@@ -1193,19 +1250,14 @@ function iniciarSSE() {
 // ------------------------------------------------------------
 window.onload = () => {
   init();
-  // Inicia o listener de atualizações em tempo real (somente se logado)
   if (obterToken()) iniciarSSE();
 
-  // Polling a cada 60s para capturar mudanças de status pelo passar do tempo
-  // (início/fim de reuniões), que o SSE não detecta pois só dispara em ações no banco
+  // Polling a cada 60s: só atualiza dashboard e analytics (status de sala pelo tempo)
+  // A lista não muda sozinha com o tempo — só muda por ação no banco (SSE cuida disso)
   if (obterToken()) {
-    setInterval(() => {
-      carregarDashboard();
-      carregarLista(abaAtiva);
-    }, 60 * 1000);
+    setInterval(() => { dispararAtualizacao({ incluirLista: false }); }, 60 * 1000);
   }
 
-  // Verifica se a integração com Notion está ativa (somente para admins)
   const usuario = obterUsuario();
   if (usuario?.role === 'admin') verificarStatusNotion();
 };
