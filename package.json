@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "npx nodemon --watch .env --watch . server.js"
+    "dev": "npx nodemon server.js"
   },
   "dependencies": {
     "@notionhq/client": "^5.11.1",
