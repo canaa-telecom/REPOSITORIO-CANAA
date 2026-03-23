@@ -518,8 +518,18 @@ async function carregarLista(aba, primeiro) {
   const lista = document.getElementById('listaReservas');
   const signal = abortarESolicitar('lista');
 
-  // Só mostra "Carregando..." na primeira carga ou troca de aba — NUNCA em atualizações silenciosas
-  if (primeiro) {
+  // MELHORIA UX: Se já temos dados em cache, renderizamos IMEDIATAMENTE.
+  // Isso remove o "Carregando..." chato ao trocar de abas que já foram visitadas.
+  if (primeiro && _cacheJson[aba]) {
+    const dadosCache = JSON.parse(_cacheJson[aba]);
+    lista.innerHTML = dadosCache.length === 0
+      ? `<div class="text-center py-8 text-slate-400 text-sm">Nenhum agendamento encontrado.</div>`
+      : dadosCache.map(r => aba === 'historico' ? renderCartaoHistorico(r) : renderCartaoReserva(r)).join('');
+    inicializarAcoesLote();
+    atualizarBarraAcaoLote();
+  } 
+  // Caso contrário, se é a primeira vez ou não temos cache, mostramos o loader
+  else if (primeiro) {
     lista.innerHTML = '<div class="text-center py-8 text-slate-400 text-sm">Carregando...</div>';
   }
 
@@ -537,8 +547,11 @@ async function carregarLista(aba, primeiro) {
     const reservas = await res.json();
     const novoJson = JSON.stringify(reservas);
 
-    // Se os dados não mudaram, não toca no DOM — evita qualquer piscar
+    // Se os dados não mudaram, não toca no DOM — evita qualquer piscar.
+    // Mas agora, se viemos de um "Carregando..." (sem cache), precisamos renderizar.
+    // Com a lógica acima, se novoJson === cacheJson, o DOM já está atualizado via cache.
     if (novoJson === _cacheJson[aba]) return;
+
     _cacheJson[aba] = novoJson;
     _listaCarregada[aba] = true;
 
@@ -551,7 +564,10 @@ async function carregarLista(aba, primeiro) {
   } catch (err) {
     if (err.name === 'AbortError') return; // Cancelado intencionalmente
     console.error('Erro ao carregar lista:', err);
-    if (primeiro) lista.innerHTML = `<div class="text-center py-8 text-red-400 text-sm">Erro ao carregar lista.</div>`;
+    // Se falhou e estávamos mostrando "Carregando", avisamos
+    if (lista.innerHTML.includes('Carregando')) {
+      lista.innerHTML = `<div class="text-center py-8 text-red-400 text-sm">Erro ao carregar lista.</div>`;
+    }
   }
 }
 
@@ -1314,5 +1330,158 @@ async function sincronizarNotion() {
     mostrarModal('erro', 'Erro ao conectar com o servidor.');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Sincronizar com Notion'; }
+  }
+}
+
+// ------------------------------------------------------------
+// ADMIN — Gerenciamento de Usuários
+// ------------------------------------------------------------
+
+/** Abre/fecha o painel de usuários e carrega a lista se aberto */
+function togglePainelUsuarios() {
+  const painel = document.getElementById('painelUsuarios');
+  painel.classList.toggle('hidden');
+  if (!painel.classList.contains('hidden')) {
+    carregarUsuariosAdmin();
+  }
+}
+
+/** Busca todos os usuários do servidor e renderiza na lista de admin */
+async function carregarUsuariosAdmin() {
+  const lista = document.getElementById('listaUsuariosAdmin');
+  try {
+    const res = await fetch(`${URL_API}/admin/usuarios`, { headers: headersAuth() });
+    if (checar401(res.status)) return;
+    const usuarios = await res.json();
+
+    if (usuarios.length === 0) {
+      lista.innerHTML = '<p class="text-[10px] text-slate-500 italic text-center py-2">Nenhum usuário encontrado.</p>';
+      return;
+    }
+
+    lista.innerHTML = usuarios.map(u => `
+      <div class="group flex items-center justify-between p-2 rounded-lg bg-slate-50 dark:bg-white/5 border border-slate-100 dark:border-white/5 hover:border-blue-500/30 transition-all">
+        <div class="min-w-0">
+          <p class="text-[11px] font-bold text-slate-700 dark:text-slate-200 truncate">${escapeHtml(u.nome)}</p>
+          <p class="text-[9px] text-slate-400 truncate">${escapeHtml(u.email)} • <span class="uppercase font-black text-blue-500/70">${u.role}</span></p>
+        </div>
+        <div class="flex items-center gap-1">
+          <button onclick="editarUsuario(${JSON.stringify(u).replace(/"/g, '&quot;')})" title="Editar Usuário"
+            class="p-1.5 text-slate-300 hover:text-blue-500 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+            </svg>
+          </button>
+          <button onclick="excluirUsuario(${u.id}, '${escapeHtml(u.nome)}')" title="Excluir Usuário"
+            class="p-1.5 text-slate-300 hover:text-red-500 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    console.error('Erro ao carregar usuários:', err);
+    lista.innerHTML = '<p class="text-[10px] text-red-400 text-center py-2">Erro ao carregar lista de usuários.</p>';
+  }
+}
+
+/** Valida e envia o formulário de novo usuário */
+async function salvarNovoUsuario(e) {
+  e.preventDefault();
+  
+  const id = document.getElementById('edit-usuario-id').value;
+  const nome = document.getElementById('usuNome').value.trim();
+  const email = document.getElementById('usuEmail').value.trim();
+  const senha = document.getElementById('usuSenha').value;
+  const role = document.getElementById('usuRole').value;
+
+  if (!nome || !email || (!id && !senha)) {
+    mostrarModal('erro', 'Preencha todos os campos corretamente.');
+    return;
+  }
+
+  const isEdicao = !!id;
+  const url = isEdicao ? `${URL_API}/admin/usuarios/${id}` : `${URL_API}/admin/usuarios`;
+  const metodo = isEdicao ? 'PUT' : 'POST';
+
+  try {
+    const res = await fetch(url, {
+      method: metodo,
+      headers: headersAuth(),
+      body: JSON.stringify({ nome, email, senha, role })
+    });
+    
+    if (checar401(res.status)) return;
+    const dados = await res.json();
+
+    if (res.ok) {
+      mostrarModal('sucesso', dados.mensagem, true);
+      limparFormularioUsuarios();
+      carregarUsuariosAdmin();
+      if (typeof carregarUsuariosParticipantes === 'function') carregarUsuariosParticipantes();
+    } else {
+      mostrarModal('erro', dados.mensagem || 'Erro ao salvar usuário.');
+    }
+  } catch (err) {
+    console.error('Erro ao salvar usuário:', err);
+    mostrarModal('erro', 'Erro ao conectar com o servidor.');
+  }
+}
+
+/** Prepara o formulário para edição */
+function editarUsuario(u) {
+  document.getElementById('edit-usuario-id').value = u.id;
+  document.getElementById('usuNome').value = u.nome;
+  document.getElementById('usuEmail').value = u.email;
+  document.getElementById('usuSenha').value = ''; // Não mostra a senha atual
+  document.getElementById('usuSenha').required = false; // Senha opcional na edição
+  document.getElementById('usuRole').value = u.role;
+  
+  document.getElementById('titulo-form-usuario').textContent = 'Editar Usuário';
+  document.getElementById('btnSalvarUsuario').textContent = 'Salvar Alterações';
+  
+  document.getElementById('formNovoUsuario').classList.remove('hidden');
+}
+
+/** Limpa o formulário e reseta estados de edição */
+function limparFormularioUsuarios() {
+  document.getElementById('edit-usuario-id').value = '';
+  document.getElementById('usuNome').value = '';
+  document.getElementById('usuEmail').value = '';
+  document.getElementById('usuSenha').value = '';
+  document.getElementById('usuSenha').required = true;
+  document.getElementById('usuRole').value = 'gestor';
+  
+  document.getElementById('titulo-form-usuario').textContent = 'Novo Usuário';
+  document.getElementById('btnSalvarUsuario').textContent = 'Criar Usuário';
+  
+  document.getElementById('formNovoUsuario').classList.add('hidden');
+}
+
+/** Solicita exclusão de usuário do servidor */
+async function excluirUsuario(id, nome) {
+  if (!confirm(`Deseja realmente excluir o usuário "${nome}"?\nEsta ação não pode ser desfeita.`)) return;
+
+  try {
+    const res = await fetch(`${URL_API}/admin/usuarios/${id}`, {
+      method: 'DELETE',
+      headers: headersAuth()
+    });
+
+    if (checar401(res.status)) return;
+    const dados = await res.json();
+
+    if (res.ok) {
+      mostrarModal('sucesso', dados.mensagem, true);
+      carregarUsuariosAdmin();
+      if (typeof carregarUsuariosParticipantes === 'function') carregarUsuariosParticipantes();
+    } else {
+      mostrarModal('erro', dados.mensagem || 'Erro ao excluir usuário.');
+    }
+  } catch (err) {
+    console.error('Erro ao excluir usuário:', err);
+    mostrarModal('erro', 'Erro ao conectar com o servidor.');
   }
 }

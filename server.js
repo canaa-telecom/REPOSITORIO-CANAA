@@ -13,6 +13,7 @@ const { enviarConviteReuniao } = require('./email');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
+const TABLE_USERS = process.env.DB_TABLE_USERS || 'usuarios';
 
 if (!JWT_SECRET) {
   console.error('❌ ERRO FATAL: JWT_SECRET não definido. Crie o arquivo .env com JWT_SECRET=<segredo_forte>');
@@ -30,7 +31,15 @@ const pool = new Pool({
   user: process.env.DB_USER,
   password: process.env.DB_PASS,
   database: process.env.DB_NAME,
-  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+  connectionTimeoutMillis: 5000 // 5 segundos para falhar se não conectar
+});
+
+// Configura o Schema (Caminho de Busca) se definido no .env
+pool.on('connect', (client) => {
+  const schema = process.env.DB_SCHEMA || 'public';
+  client.query(`SET search_path TO "${schema}", public`)
+    .catch(err => console.error('❌ Erro ao definir search_path:', err.message));
 });
 
 // Testar a conexão no início
@@ -63,7 +72,7 @@ async function inicializarBanco() {
   try {
     // Tabela de usuários
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS usuarios (
+      CREATE TABLE IF NOT EXISTS ${TABLE_USERS} (
         id    SERIAL PRIMARY KEY,
         nome  VARCHAR(255) NOT NULL,
         email VARCHAR(255) NOT NULL UNIQUE,
@@ -89,7 +98,7 @@ async function inicializarBanco() {
         notion_page_id        VARCHAR(255),
         notion_status_enviado VARCHAR(50),
         motivo_cancelamento   TEXT,
-        FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+        FOREIGN KEY (usuario_id) REFERENCES ${TABLE_USERS}(id)
       )
     `);
 
@@ -104,12 +113,12 @@ async function inicializarBanco() {
         usuario_id INTEGER NOT NULL,
         UNIQUE(reserva_id, usuario_id),
         FOREIGN KEY (reserva_id) REFERENCES reservas(id) ON DELETE CASCADE,
-        FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+        FOREIGN KEY (usuario_id) REFERENCES ${TABLE_USERS}(id)
       )
     `);
 
     // Seed: cria o admin padrão se não existir nenhum
-    const adminCheck = await pool.query("SELECT id FROM usuarios WHERE role = 'admin'");
+    const adminCheck = await pool.query(`SELECT id FROM ${TABLE_USERS} WHERE role = 'admin'`);
     if (adminCheck.rows.length === 0) {
       // Usa ADMIN_PASSWORD do .env; se não definida, usa a senha padrão como fallback
       const senhaAdmin = process.env.ADMIN_PASSWORD || 'Cna!@#123';
@@ -118,12 +127,12 @@ async function inicializarBanco() {
       }
       const senhaHash = bcrypt.hashSync(senhaAdmin, 10);
 
-      await pool.query(`INSERT INTO usuarios (nome, email, senha, role) VALUES ($1, $2, $3, $4)`, [
+      await pool.query(`INSERT INTO ${TABLE_USERS} (nome, email, senha, role) VALUES ($1, $2, $3, $4)`, [
         'Administrador', 'ti@canaatelecom.com.br', senhaHash, 'admin'
       ]);
-      console.log('✅ Admin padrão criado: ti@canaatelecom.com.br');
+      console.log(`✅ Admin padrão criado na tabela ${TABLE_USERS}: ti@canaatelecom.com.br`);
 
-      const adminIdRes = await pool.query("SELECT id FROM usuarios WHERE role = 'admin'");
+      const adminIdRes = await pool.query(`SELECT id FROM ${TABLE_USERS} WHERE role = 'admin'`);
       const adminId = adminIdRes.rows[0].id;
       const dataHoje = hoje();
 
@@ -315,7 +324,7 @@ app.post('/api/login', async (req, res) => {
       return res.status(400).json({ erro: true, mensagem: 'E-mail e senha são obrigatórios.' });
     }
 
-    const { rows } = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
+    const { rows } = await pool.query(`SELECT * FROM ${TABLE_USERS} WHERE email = $1`, [email]);
     const usuario = rows[0];
 
     if (!usuario || !bcrypt.compareSync(senha, usuario.senha)) {
@@ -349,7 +358,7 @@ app.get('/api/status', async (req, res) => {
     // Reunião presencial ativa agora
     const reservaAtivaRes = await pool.query(`
       SELECT r.*, u.nome AS gestor
-      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
       WHERE r.data = $1 AND r.status = 'confirmada' AND r.modalidade = 'presencial'
         AND r.horainicio <= $2 AND r.horafim > $3
     `, [dataHoje, agora, agora]);
@@ -357,7 +366,7 @@ app.get('/api/status', async (req, res) => {
     // Reunião online ativa agora
     const reuniaoOnlineAtivaRes = await pool.query(`
       SELECT r.*, u.nome AS gestor
-      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
       WHERE r.data = $1 AND r.status = 'confirmada' AND r.modalidade = 'online'
         AND r.horainicio <= $2 AND r.horafim > $3
     `, [dataHoje, agora, agora]);
@@ -365,7 +374,7 @@ app.get('/api/status', async (req, res) => {
     // Próxima reunião confirmada de hoje (qualquer modalidade)
     const proximaReuniaoRes = await pool.query(`
       SELECT r.*, u.nome AS gestor
-      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
       WHERE r.data = $1 AND r.status = 'confirmada' AND r.horainicio > $2
       ORDER BY r.horainicio ASC LIMIT 1
     `, [dataHoje, agora]);
@@ -397,7 +406,7 @@ app.get('/api/status', async (req, res) => {
 app.get('/api/reservas', autenticar, async (req, res) => {
   try {
     const dataHoje = hoje();
-    const agora    = horaAtual();
+    const agora = horaAtual();
     const usuarioId = req.usuario.id;
 
     const reservasRes = await pool.query(`
@@ -406,9 +415,9 @@ app.get('/api/reservas', autenticar, async (req, res) => {
              (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
              (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = $1) AS "euConfirmei",
              (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
-              JOIN usuarios u2 ON u2.id = p2.usuario_id
+              JOIN ${TABLE_USERS} u2 ON u2.id = p2.usuario_id
               WHERE p2.reserva_id = r.id) AS "participantesNomes"
-      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
       WHERE r.status = 'confirmada'
         AND (
           r.data > $2
@@ -446,15 +455,15 @@ app.get('/api/reservas', autenticar, async (req, res) => {
 app.get('/api/historico', autenticar, apenasAdmin, async (req, res) => {
   try {
     const dataHoje = hoje();
-    const agora    = horaAtual();
+    const agora = horaAtual();
 
     const result = await pool.query(`
       SELECT r.*,
              u.nome AS gestor,
              (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
-              JOIN usuarios u2 ON u2.id = p2.usuario_id
+              JOIN ${TABLE_USERS} u2 ON u2.id = p2.usuario_id
               WHERE p2.reserva_id = r.id) AS "participantesNomes"
-      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
       WHERE r.status = 'cancelada'
          OR (r.status = 'confirmada' AND r.data < $1)
          OR (r.status = 'confirmada' AND r.data = $1 AND r.horafim <= $2)
@@ -463,8 +472,8 @@ app.get('/api/historico', autenticar, apenasAdmin, async (req, res) => {
 
     const comStatus = result.rows.map(r => {
       const horaInicio = r.horainicio || r.horaInicio;
-      const horaFim    = r.horafim    || r.horaFim;
-      const partNomes  = r.participantesnomes || r.participantesNomes;
+      const horaFim = r.horafim || r.horaFim;
+      const partNomes = r.participantesnomes || r.participantesNomes;
       return {
         ...r,
         horaInicio,
@@ -557,7 +566,7 @@ app.post('/api/reservas', autenticar, async (req, res) => {
     // Busca nomes dos participantes para retornar ao frontend
     const nomesRes = await pool.query(`
       SELECT u.nome FROM presencas p
-      JOIN usuarios u ON u.id = p.usuario_id
+      JOIN ${TABLE_USERS} u ON u.id = p.usuario_id
       WHERE p.reserva_id = $1
     `, [novaId]);
     const participantesNomes = nomesRes.rows.map(r => r.nome);
@@ -565,7 +574,7 @@ app.post('/api/reservas', autenticar, async (req, res) => {
     const novaReservaRes = await pool.query(`
       SELECT r.*, u.nome AS gestor,
              ${idsValidos.length} AS confirmados, 0 AS "euConfirmei"
-      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
       WHERE r.id = $1
     `, [novaId]);
 
@@ -588,7 +597,7 @@ app.post('/api/reservas', autenticar, async (req, res) => {
     if (idsValidos.length > 0) {
       // Busca nome + email de cada participante
       pool.query(
-        `SELECT id, nome, email FROM usuarios WHERE id = ANY($1::int[])`,
+        `SELECT id, nome, email FROM ${TABLE_USERS} WHERE id = ANY($1::int[])`,
         [idsValidos]
       ).then(({ rows: participantesInfo }) => {
         const horaInicio = novaReserva.horainicio || novaReserva.horaInicio;
@@ -782,7 +791,7 @@ app.patch('/api/reservas/multiplas/cancelar', autenticar, apenasAdmin, async (re
 // ── GET /api/usuarios ────────────────────────────────────────
 app.get('/api/usuarios', autenticar, async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT id, nome FROM usuarios ORDER BY nome ASC');
+    const { rows } = await pool.query(`SELECT id, nome FROM ${TABLE_USERS} ORDER BY nome ASC`);
     res.json(rows);
   } catch (err) {
     console.error(err);
@@ -977,7 +986,7 @@ app.get('/api/estatisticas', autenticar, async (req, res) => {
   try {
     const rankQtd = await pool.query(`
       SELECT u.nome, COUNT(r.id) AS "totalReservas"
-      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
       WHERE r.status = 'confirmada'
       GROUP BY r.usuario_id, u.nome
       ORDER BY "totalReservas" DESC LIMIT 5
@@ -990,7 +999,7 @@ app.get('/api/estatisticas', autenticar, async (req, res) => {
           (CAST(SUBSTRING(r.horaFim FROM 1 FOR 2) AS INTEGER) * 60 + CAST(SUBSTRING(r.horaFim FROM 4 FOR 2) AS INTEGER)) -
           (CAST(SUBSTRING(r.horaInicio FROM 1 FOR 2) AS INTEGER) * 60 + CAST(SUBSTRING(r.horaInicio FROM 4 FOR 2) AS INTEGER))
         ) AS "totalMinutos"
-      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
       WHERE r.status = 'confirmada'
       GROUP BY r.usuario_id, u.nome 
       ORDER BY "totalMinutos" DESC LIMIT 5
@@ -1018,6 +1027,100 @@ app.get('/api/estatisticas', autenticar, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ erro: true, mensagem: 'Erro ao buscar estatisticas' });
+  }
+});
+
+// ── GERENCIAMENTO DE USUÁRIOS (ADMIN) ─────────────────────────
+
+/** Lista todos os usuários cadastrados */
+app.get('/api/admin/usuarios', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT id, nome, email, role FROM ${TABLE_USERS} ORDER BY nome ASC`);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ mensagem: 'Erro ao listar usuários' });
+  }
+});
+
+/** Cria um novo usuário com senha criptografada */
+app.post('/api/admin/usuarios', autenticar, apenasAdmin, async (req, res) => {
+  const { nome, email, senha, role } = req.body;
+  console.log(`[ADMIN] Tentativa de criar usuário: ${email} (${nome})`);
+
+  if (!nome || !email || !senha || !role) {
+    console.warn(`[ADMIN] Falha na criação: campos incompletos.`);
+    return res.status(400).json({ mensagem: 'Preencha todos os campos obrigatórios.' });
+  }
+
+  try {
+    const hash = bcrypt.hashSync(senha, 10);
+    console.log(`[ADMIN] Hash gerado com sucesso.`);
+
+    await pool.query(
+      `INSERT INTO ${TABLE_USERS} (nome, email, senha, role) VALUES ($1, $2, $3, $4)`,
+      [nome, email, hash, role]
+    );
+    console.log(`[ADMIN] Usuário inserido no banco de dados.`);
+    res.status(201).json({ mensagem: 'Usuário criado com sucesso!' });
+  } catch (err) {
+    if (err.code === '23505') {
+      console.warn(`[ADMIN] Erro: E-mail duplicado (${email}).`);
+      return res.status(400).json({ mensagem: 'Este e-mail já está sendo utilizado.' });
+    }
+    console.error(`[ADMIN] Erro fatal ao cadastrar usuário:`, err);
+    res.status(500).json({ mensagem: 'Erro ao cadastrar usuário.' });
+  }
+});
+
+/** Remove um usuário do sistema */
+app.delete('/api/admin/usuarios/:id', autenticar, apenasAdmin, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    // Impede o admin de se auto-excluir
+    if (parseInt(id) === req.usuario.id) {
+      return res.status(400).json({ mensagem: 'Você não pode excluir sua própria conta administrativa.' });
+    }
+
+    await pool.query(`DELETE FROM ${TABLE_USERS} WHERE id = $1`, [id]);
+    res.json({ mensagem: 'Usuário removido permanentemente.' });
+  } catch (err) {
+    res.status(500).json({ mensagem: 'Erro ao remover usuário.' });
+  }
+});
+
+/** Atualiza um usuário existente */
+app.put('/api/admin/usuarios/:id', autenticar, apenasAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { nome, email, senha, role } = req.body;
+
+  if (!nome || !email || !role) {
+    return res.status(400).json({ mensagem: 'Nome, e-mail e cargo são obrigatórios.' });
+  }
+
+  try {
+    let query;
+    let params;
+
+    if (senha && senha.trim() !== '') {
+      // Se informou senha, atualiza tudo incluindo a nova senha hash
+      const hash = bcrypt.hashSync(senha, 10);
+      query = `UPDATE ${TABLE_USERS} SET nome=$1, email=$2, senha=$3, role=$4 WHERE id=$5`;
+      params = [nome, email, hash, role, id];
+    } else {
+      // Sem senha, mantém a atual
+      query = `UPDATE ${TABLE_USERS} SET nome=$1, email=$2, role=$3 WHERE id=$4`;
+      params = [nome, email, role, id];
+    }
+
+    await pool.query(query, params);
+    res.json({ mensagem: 'Usuário atualizado com sucesso!' });
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(400).json({ mensagem: 'Este e-mail já está sendo utilizado por outro usuário.' });
+    }
+    console.error('Erro ao atualizar usuário:', err);
+    res.status(500).json({ mensagem: 'Erro ao atualizar usuário.' });
   }
 });
 
@@ -1106,7 +1209,7 @@ inicializarBanco().then(() => {
   }
 
   process.on('SIGTERM', () => fecharServidor('SIGTERM'));
-  process.on('SIGINT',  () => fecharServidor('SIGINT'));
+  process.on('SIGINT', () => fecharServidor('SIGINT'));
 
 }).catch(err => {
   console.error("❌ Falha fatal ao inicializar aplicação:", err);
