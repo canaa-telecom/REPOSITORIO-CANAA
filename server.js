@@ -193,12 +193,6 @@ async function migrarBanco() {
       console.log('✅ Migração: coluna motivo_cancelamento adicionada');
     }
 
-    // Remove registros com status 'pendente' que possam ter sido criados pelo seed antigo
-    const pendentesRes = await pool.query("SELECT COUNT(*) FROM reservas WHERE status = 'pendente'");
-    if (parseInt(pendentesRes.rows[0].count) > 0) {
-      await pool.query("DELETE FROM reservas WHERE status = 'pendente'");
-      console.log('✅ Migração: registros com status pendente removidos');
-    }
   } catch (err) {
     console.error("❌ Erro durante a migração do banco:", err);
   }
@@ -383,17 +377,12 @@ app.get('/api/status', async (req, res) => {
       SELECT COUNT(*) AS total FROM reservas WHERE data = $1 AND status = 'confirmada'
     `, [dataHoje]);
 
-    const pendentesRes = await pool.query(`
-      SELECT COUNT(*) AS total FROM reservas WHERE status = 'pendente'
-    `);
-
     res.json({
       salaLivre: reservaAtivaRes.rows.length === 0,
       reservaAtiva: reservaAtivaRes.rows[0] || null,
       reuniaoOnlineAtiva: reuniaoOnlineAtivaRes.rows[0] || null,
       proximaReuniao: proximaReuniaoRes.rows[0] || null,
       reunioesHoje: parseInt(reunioesHojeRes.rows[0].total, 10),
-      pendentes: parseInt(pendentesRes.rows[0].total, 10),
       horaAtual: agora
     });
   } catch (err) {
@@ -450,46 +439,6 @@ app.get('/api/reservas', autenticar, async (req, res) => {
   }
 });
 
-
-// ── GET /api/historico ───────────────────────────────────────
-app.get('/api/historico', autenticar, apenasAdmin, async (req, res) => {
-  try {
-    const dataHoje = hoje();
-    const agora = horaAtual();
-
-    const result = await pool.query(`
-      SELECT r.*,
-             u.nome AS gestor,
-             (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
-              JOIN ${TABLE_USERS} u2 ON u2.id = p2.usuario_id
-              WHERE p2.reserva_id = r.id) AS "participantesNomes"
-      FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
-      WHERE r.status = 'cancelada'
-         OR (r.status = 'confirmada' AND r.data < $1)
-         OR (r.status = 'confirmada' AND r.data = $1 AND r.horafim <= $2)
-      ORDER BY r.data DESC, r.horainicio DESC
-    `, [dataHoje, agora]);
-
-    const comStatus = result.rows.map(r => {
-      const horaInicio = r.horainicio || r.horaInicio;
-      const horaFim = r.horafim || r.horaFim;
-      const partNomes = r.participantesnomes || r.participantesNomes;
-      return {
-        ...r,
-        horaInicio,
-        horaFim,
-        statusDinamico: calcularStatusDinamico(r),
-        participantesNomes: partNomes ? partNomes.split('||') : []
-      };
-    });
-
-    res.json(comStatus);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ erro: true, mensagem: 'Erro interno ao buscar histórico' });
-  }
-});
-
 // ── POST /api/reservas ───────────────────────────────────────
 app.post('/api/reservas', autenticar, async (req, res) => {
   try {
@@ -511,6 +460,12 @@ app.post('/api/reservas', autenticar, async (req, res) => {
     }
     if (modalidade === 'online' && !link_reuniao) {
       return res.status(400).json({ erro: true, mensagem: 'Reuniões online exigem um link de acesso.' });
+    }
+    if (titulo.length > 255) {
+      return res.status(400).json({ erro: true, mensagem: 'O título não pode ultrapassar 255 caracteres.' });
+    }
+    if (link_reuniao && link_reuniao.length > 500) {
+      return res.status(400).json({ erro: true, mensagem: 'O link da reunião não pode ultrapassar 500 caracteres.' });
     }
     if (pre_ata && pre_ata.length > 600) {
       return res.status(400).json({ erro: true, mensagem: 'A pré-ata não pode ultrapassar 600 caracteres.' });
@@ -624,17 +579,19 @@ app.post('/api/reservas', autenticar, async (req, res) => {
     criarPaginaNotion(novaReserva, participantesNomes, statusParaNotion).then(async notionPageId => {
       if (notionPageId) {
         await pool.query('UPDATE reservas SET notion_page_id = $1, notion_status_enviado = $2 WHERE id = $3',
-          [notionPageId, statusParaNotion, novaReserva.id]).catch(() => { });
+          [notionPageId, statusParaNotion, novaReserva.id]).catch(err => {
+            console.error(`❌ Notion: erro ao salvar notion_page_id no banco para reserva #${novaReserva.id}:`, err.message);
+          });
       }
-    }).catch(() => { });
+    }).catch(err => {
+      console.error(`❌ Notion: erro crítico ao criar página para reserva #${novaReserva.id}:`, err.message);
+    });
 
   } catch (err) {
     console.error(err);
     res.status(500).json({ erro: true, mensagem: 'Erro ao criar reserva' });
   }
 });
-
-
 
 // ── PATCH /api/reservas/:id/cancelar ────────────────────────
 app.patch('/api/reservas/:id/cancelar', autenticar, async (req, res) => {
@@ -661,7 +618,6 @@ app.patch('/api/reservas/:id/cancelar', autenticar, async (req, res) => {
     notificarClientes();
     res.json({ erro: false, mensagem: 'Reunião cancelada com sucesso.' });
 
-    console.log(`🔍 Debug cancelamento #${id}: notion_page_id = "${reserva.notion_page_id}", motivo = "${motivo?.trim() || '(vazio)'}"`);
     if (reserva.notion_page_id) {
       cancelarPaginaNotion(reserva.notion_page_id, motivo?.trim() || '')
         .catch(err => console.error('Notion: erro ao atualizar cancelamento:', err.message));
@@ -733,7 +689,9 @@ app.delete('/api/reservas/:id', autenticar, async (req, res) => {
     res.json({ erro: false, mensagem: 'Reserva apagada com sucesso.' });
 
     if (reserva.notion_page_id) {
-      arquivarPaginaNotion(reserva.notion_page_id).catch(() => { });
+      arquivarPaginaNotion(reserva.notion_page_id).catch(err => {
+        console.error(`❌ Notion: falha ao arquivar página ${reserva.notion_page_id} da reserva #${id}:`, err.message);
+      });
     }
   } catch (err) {
     console.error(err);
@@ -778,7 +736,7 @@ app.patch('/api/reservas/multiplas/cancelar', autenticar, apenasAdmin, async (re
     reservasParaCancelar.forEach(reserva => {
       if (reserva.status !== 'cancelada' && reserva.notion_page_id) {
         cancelarPaginaNotion(reserva.notion_page_id, justificativa || '')
-          .catch(err => console.error('Notion: erro ao atualizar cancelamento em lote:', err.message));
+          .catch(err => console.error(`❌ Notion: erro ao atualizar cancelamento em lote para página ${reserva.notion_page_id}:`, err.message));
       }
     });
 
@@ -812,9 +770,9 @@ app.post('/api/notion/sync', autenticar, apenasAdmin, async (req, res) => {
     const reservasRes = await pool.query(`
       SELECT r.*, u.nome AS gestor,
              (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
-              JOIN usuarios u2 ON u2.id = p2.usuario_id
+              JOIN ${TABLE_USERS} u2 ON u2.id = p2.usuario_id
               WHERE p2.reserva_id = r.id) AS "participantesNomes"
-      FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+      FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
       WHERE r.data >= $1
       ORDER BY r.data ASC, r.horainicio ASC
     `, [dataHoje]);
@@ -885,7 +843,7 @@ app.patch('/api/reservas/:id/presenca', autenticar, async (req, res) => {
     if (reservaCompleta?.notion_page_id) {
       const nomesRes = await pool.query(`
         SELECT u.nome FROM presencas p
-        JOIN usuarios u ON u.id = p.usuario_id
+        JOIN ${TABLE_USERS} u ON u.id = p.usuario_id
         WHERE p.reserva_id = $1
       `, [reservaId]);
 
@@ -912,9 +870,9 @@ app.get('/api/historico', autenticar, async (req, res) => {
                (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
                (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = $1) AS "euConfirmei",
                (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
-                JOIN usuarios u2 ON u2.id = p2.usuario_id
+                JOIN ${TABLE_USERS} u2 ON u2.id = p2.usuario_id
                 WHERE p2.reserva_id = r.id) AS "participantesNomes"
-        FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+        FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
         ORDER BY r.data DESC, r.horainicio ASC
       `, [usuarioId]);
       historico = histRes.rows;
@@ -924,9 +882,9 @@ app.get('/api/historico', autenticar, async (req, res) => {
                (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
                (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = $1) AS "euConfirmei",
                (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
-                JOIN usuarios u2 ON u2.id = p2.usuario_id
+                JOIN ${TABLE_USERS} u2 ON u2.id = p2.usuario_id
                 WHERE p2.reserva_id = r.id) AS "participantesNomes"
-        FROM reservas r JOIN usuarios u ON u.id = r.usuario_id
+        FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
         WHERE r.usuario_id = $1
         ORDER BY r.data DESC, r.horainicio ASC
       `, [usuarioId]);
@@ -965,8 +923,11 @@ app.delete('/api/historico/concluidas', autenticar, apenasAdmin, async (req, res
 
     const delRes = await pool.query(`
       DELETE FROM reservas
-      WHERE data < $1
-         OR (data = $2 AND horafim <= $3)
+      WHERE status = 'confirmada'
+        AND (
+          data < $1
+          OR (data = $2 AND horafim <= $3)
+        )
     `, [dataHoje, dataHoje, agora]);
 
     res.json({
@@ -992,16 +953,16 @@ app.get('/api/estatisticas', autenticar, async (req, res) => {
       ORDER BY "totalReservas" DESC LIMIT 5
     `);
 
-    // PostgreSQL SUBSTRING(X FROM Y FOR Z)
+    // PostgreSQL SUBSTRING(X FROM Y FOR Z) — colunas em minúsculas (padrão PostgreSQL)
     const rankTempo = await pool.query(`
       SELECT u.nome,
         SUM(
-          (CAST(SUBSTRING(r.horaFim FROM 1 FOR 2) AS INTEGER) * 60 + CAST(SUBSTRING(r.horaFim FROM 4 FOR 2) AS INTEGER)) -
-          (CAST(SUBSTRING(r.horaInicio FROM 1 FOR 2) AS INTEGER) * 60 + CAST(SUBSTRING(r.horaInicio FROM 4 FOR 2) AS INTEGER))
+          (CAST(SUBSTRING(r.horafim FROM 1 FOR 2) AS INTEGER) * 60 + CAST(SUBSTRING(r.horafim FROM 4 FOR 2) AS INTEGER)) -
+          (CAST(SUBSTRING(r.horainicio FROM 1 FOR 2) AS INTEGER) * 60 + CAST(SUBSTRING(r.horainicio FROM 4 FOR 2) AS INTEGER))
         ) AS "totalMinutos"
       FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
       WHERE r.status = 'confirmada'
-      GROUP BY r.usuario_id, u.nome 
+      GROUP BY r.usuario_id, u.nome
       ORDER BY "totalMinutos" DESC LIMIT 5
     `);
 
@@ -1009,8 +970,8 @@ app.get('/api/estatisticas', autenticar, async (req, res) => {
       SELECT
         COUNT(*) AS "totalReservas",
         SUM(
-          (CAST(SUBSTRING(horaFim FROM 1 FOR 2) AS INTEGER) * 60 + CAST(SUBSTRING(horaFim FROM 4 FOR 2) AS INTEGER)) -
-          (CAST(SUBSTRING(horaInicio FROM 1 FOR 2) AS INTEGER) * 60 + CAST(SUBSTRING(horaInicio FROM 4 FOR 2) AS INTEGER))
+          (CAST(SUBSTRING(horafim FROM 1 FOR 2) AS INTEGER) * 60 + CAST(SUBSTRING(horafim FROM 4 FOR 2) AS INTEGER)) -
+          (CAST(SUBSTRING(horainicio FROM 1 FOR 2) AS INTEGER) * 60 + CAST(SUBSTRING(horainicio FROM 4 FOR 2) AS INTEGER))
         ) AS "totalMinutos"
       FROM reservas WHERE status = 'confirmada'
     `);

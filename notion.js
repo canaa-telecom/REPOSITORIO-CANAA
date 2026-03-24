@@ -75,23 +75,23 @@ function montarPropriedades(reserva, participantes = [], statusDinamico = 'Agend
             } : null
         },
 
-        // 4. Pauta / Pré-Ata
+        // 3. Pauta / Pré-Ata
         'Pauta': {
             rich_text: [{ text: { content: reserva.pre_ata || '' } }]
         },
 
-        // 5. Responsável (quem criou o agendamento)
+        // 4. Responsável (quem criou o agendamento)
         'Responsável': {
             rich_text: [{ text: { content: reserva.gestor || '' } }]
         },
 
-        // 6. Confirmados (nomes de quem confirmou presença)
+        // 5. Confirmados (nomes de quem confirmou presença)
         'Confirmados': {
             rich_text: [{ text: { content: nomesTexto } }]
         }
     };
 
-    // 3. Status — só inclui se o mapeamento existir (evita erro de opção inválida)
+    // 6. Status — só inclui se o mapeamento existir (evita erro de opção inválida)
     if (statusNotion) {
         props['Status'] = { status: { name: statusNotion } };
     } else {

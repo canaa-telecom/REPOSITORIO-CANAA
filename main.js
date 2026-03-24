@@ -5,7 +5,7 @@ const URL_API = `${window.location.origin}/api`;
 let abaAtiva = 'proximos';
 
 // ── Controle de requisições concorrentes ─────────────────────
-const _abort = { dashboard: null, lista: null, analytics: null };
+const _abort = { dashboard: null, lista: null };
 
 function abortarESolicitar(chave) {
   if (_abort[chave]) { _abort[chave].abort(); }
@@ -627,16 +627,6 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
-/** Retorna o HTML do badge de status dinâmico */
-function renderBadgeStatus(statusDinamico) {
-  switch (statusDinamico) {
-    case 'Concluída': return '<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300">Concluída</span>';
-    case 'Em andamento': return '<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300 animate-pulse">● Em andamento</span>';
-    case 'Agendada': return '<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">Agendada</span>';
-    case 'Cancelada': return '<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-500 dark:bg-red-900/30 dark:text-red-400 line-through">Cancelada</span>';
-    default: return '<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">Pendente</span>';
-  }
-}
 
 /** Renderiza o HTML de um item da lista no layout compacto de linha única */
 function renderCartaoReserva(r) {
@@ -859,7 +849,7 @@ async function executarCancelamento(id, motivo) {
 
 
 /** Toggle de RSVP via PATCH /api/reservas/:id/presenca */
-async function confirmarPresenca(reservaId, criador = false) {
+async function confirmarPresenca(reservaId) {
   const usuario = obterUsuario();
   try {
     const res = await fetch(`${URL_API}/reservas/${reservaId}/presenca`, {
@@ -893,8 +883,8 @@ async function confirmarPresenca(reservaId, criador = false) {
     // Atualiza contagem
     if (count) count.textContent = dados.confirmados;
 
-    // Atualiza a lista de nomes inline (visível somente para o criador)
-    if (criador && usuario) {
+    // Atualiza a lista de nomes inline
+    if (usuario) {
       let nomesDiv = document.getElementById(`rsvp-nomes-${reservaId}`);
 
       if (dados.confirmou) {
