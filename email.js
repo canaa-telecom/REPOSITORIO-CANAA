@@ -32,6 +32,17 @@ function getTransporter() {
 
 // ── Template HTML de convite ─────────────────────────────────
 
+/** Sanitiza strings para uso seguro dentro de HTML (previne HTML injection nos e-mails) */
+function escHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, horaFim, modalidade, linkReuniao, nomeOrganizador, preAta }) {
   const dataFormatada = (() => {
     if (!data) return '—';
@@ -50,7 +61,7 @@ function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, ho
   const linkBtn = isOnline && linkReuniao ? `
     <tr>
       <td align="center" style="padding: 8px 0 24px;">
-        <a href="${linkReuniao}"
+        <a href="${escHtml(linkReuniao)}"
           style="display:inline-block; background: linear-gradient(135deg, #7c3aed, #06b6d4);
                  color: #ffffff; text-decoration: none; font-weight: 700; font-size: 13px;
                  padding: 12px 28px; border-radius: 8px; letter-spacing: 0.05em;">
@@ -65,7 +76,7 @@ function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, ho
         <div style="background: #f8fafc; border-left: 3px solid ${corAcento}; border-radius: 6px; padding: 12px 16px;">
           <p style="margin: 0 0 6px; font-size: 10px; font-weight: 700; text-transform: uppercase;
                      letter-spacing: 0.12em; color: #64748b;">Pauta / Pré-Ata</p>
-          <p style="margin: 0; font-size: 13px; color: #334155; line-height: 1.6; white-space: pre-wrap;">${preAta}</p>
+          <p style="margin: 0; font-size: 13px; color: #334155; line-height: 1.6; white-space: pre-wrap;">${escHtml(preAta)}</p>
         </div>
       </td>
     </tr>` : '';
@@ -123,7 +134,7 @@ function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, ho
                       </span>
                     </div>
                     <h1 style="margin:0; font-size:22px; font-weight:800; color:#ffffff; line-height:1.3;">
-                      ${tituloReuniao}
+                      ${escHtml(tituloReuniao)}
                     </h1>
                   </td>
                 </tr>
@@ -135,10 +146,10 @@ function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, ho
           <tr>
             <td style="padding: 28px 32px 4px;">
               <p style="margin:0; font-size:15px; color:#1e293b; line-height:1.6;">
-                Olá, <strong style="color:${corPrincipal};">${nomeParticipante}</strong>! 👋
+                Olá, <strong style="color:${corPrincipal};">${escHtml(nomeParticipante)}</strong>! 👋
               </p>
               <p style="margin:8px 0 0; font-size:14px; color:#475569; line-height:1.6;">
-                <strong>${nomeOrganizador}</strong> agendou uma reunião e solicitou a sua presença.
+                <strong>${escHtml(nomeOrganizador)}</strong> agendou uma reunião e solicitou a sua presença.
               </p>
             </td>
           </tr>

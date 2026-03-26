@@ -834,7 +834,7 @@ async function executarCancelamento(id, motivo) {
 
     if (res.ok) {
       mostrarModal('sucesso', dados.mensagem, true);
-      invalidarCacheLista(); // Força re-render na próxima chamada
+      invalidarCacheLista(abaAtiva); // Invalida apenas a aba atual
       carregarDashboard();
       carregarLista(abaAtiva, true);
       carregarAnalytics();
@@ -859,33 +859,13 @@ async function confirmarPresenca(reservaId) {
     if (checar401(res.status)) return;
     const dados = await res.json();
 
-    // Atualiza o botão e o contador inline, sem recarregar a lista
-    const btn = document.getElementById(`rsvp-btn-${reservaId}`);
+    // Atualiza o contador inline, sem recarregar a lista
     const count = document.getElementById(`rsvp-count-${reservaId}`);
-
-    if (btn) {
-      // Classes para estado confirmado
-      const clsOn = 'bg-emerald-50 border-emerald-200 text-emerald-600 dark:bg-emerald-900/30 dark:border-emerald-700/40 dark:text-emerald-400 hover:bg-red-50 hover:border-red-200 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:border-red-700/40 dark:hover:text-red-400';
-      const clsOff = 'bg-transparent border-slate-200 text-slate-400 dark:border-white/10 dark:text-slate-500 hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-600 dark:hover:bg-emerald-900/20 dark:hover:border-emerald-700/40 dark:hover:text-emerald-400';
-
-      // Remove ambos os conjuntos de classes e aplica o novo estado
-      btn.classList.remove(...clsOn.split(' '), ...clsOff.split(' '));
-      btn.classList.add(...(dados.confirmou ? clsOn : clsOff).split(' '));
-
-      // Atualiza o título (tooltip) do botão
-      btn.title = dados.confirmou ? 'Cancelar presença' : 'Confirmar presença';
-
-      // Atualiza o fill do SVG dentro do botão
-      const svg = btn.querySelector('svg');
-      if (svg) svg.setAttribute('fill', dados.confirmou ? 'currentColor' : 'none');
-    }
-
-    // Atualiza contagem
     if (count) count.textContent = dados.confirmados;
 
     // Atualiza a lista de nomes inline
     if (usuario) {
-      let nomesDiv = document.getElementById(`rsvp-nomes-${reservaId}`);
+      const nomesDiv = document.getElementById(`rsvp-nomes-${reservaId}`);
 
       if (dados.confirmou) {
         if (nomesDiv) {
@@ -1451,27 +1431,53 @@ function limparFormularioUsuarios() {
 }
 
 /** Solicita exclusão de usuário do servidor */
-async function excluirUsuario(id, nome) {
-  if (!confirm(`Deseja realmente excluir o usuário "${nome}"?\nEsta ação não pode ser desfeita.`)) return;
+function excluirUsuario(id, nome) {
+  mostrarModal('aviso', `Deseja realmente excluir o usuário "${escapeHtml(nome)}"? Esta ação não pode ser desfeita.`);
 
-  try {
-    const res = await fetch(`${URL_API}/admin/usuarios/${id}`, {
-      method: 'DELETE',
-      headers: headersAuth()
-    });
+  // Remove botões anteriores se existirem (re-uso do modal)
+  document.getElementById('adminConfirmarBtn')?.remove();
+  document.getElementById('adminCancelarBtn')?.remove();
 
-    if (checar401(res.status)) return;
-    const dados = await res.json();
+  const barWrap = document.getElementById('modalBarWrap');
+  const modalCard = document.getElementById('modalCard');
 
-    if (res.ok) {
-      mostrarModal('sucesso', dados.mensagem, true);
-      carregarUsuariosAdmin();
-      if (typeof carregarUsuariosParticipantes === 'function') carregarUsuariosParticipantes();
-    } else {
-      mostrarModal('erro', dados.mensagem || 'Erro ao excluir usuário.');
+  const botoesDiv = document.createElement('div');
+  botoesDiv.className = 'flex gap-2 mt-4 justify-end';
+
+  const btnNao = document.createElement('button');
+  btnNao.id = 'adminCancelarBtn';
+  btnNao.textContent = 'Não';
+  btnNao.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-all';
+  btnNao.onclick = () => { botoesDiv.remove(); fecharModal(); };
+
+  const btnSim = document.createElement('button');
+  btnSim.id = 'adminConfirmarBtn';
+  btnSim.textContent = 'Sim, excluir';
+  btnSim.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all';
+  btnSim.onclick = async () => {
+    botoesDiv.remove();
+    fecharModal();
+    try {
+      const res = await fetch(`${URL_API}/admin/usuarios/${id}`, {
+        method: 'DELETE',
+        headers: headersAuth()
+      });
+      if (checar401(res.status)) return;
+      const dados = await res.json();
+      if (res.ok) {
+        mostrarModal('sucesso', dados.mensagem, true);
+        carregarUsuariosAdmin();
+        if (typeof carregarUsuariosParticipantes === 'function') carregarUsuariosParticipantes();
+      } else {
+        mostrarModal('erro', dados.mensagem || 'Erro ao excluir usuário.');
+      }
+    } catch (err) {
+      console.error('Erro ao excluir usuário:', err);
+      mostrarModal('erro', 'Erro ao conectar com o servidor.');
     }
-  } catch (err) {
-    console.error('Erro ao excluir usuário:', err);
-    mostrarModal('erro', 'Erro ao conectar com o servidor.');
-  }
+  };
+
+  botoesDiv.appendChild(btnNao);
+  botoesDiv.appendChild(btnSim);
+  barWrap ? modalCard.insertBefore(botoesDiv, barWrap) : modalCard.appendChild(botoesDiv);
 }

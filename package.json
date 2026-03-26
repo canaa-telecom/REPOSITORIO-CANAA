@@ -1,6 +1,6 @@
 {
   "name": "canaa-telecom-sala-reuniao",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "description": "Sistema de Reserva de Sala de Reunião — Canaã Telecom",
   "main": "server.js",
   "scripts": {

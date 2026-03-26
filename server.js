@@ -94,7 +94,7 @@ async function inicializarBanco() {
         modalidade            VARCHAR(50)  NOT NULL DEFAULT 'presencial' CHECK(modalidade IN ('presencial', 'online')),
         link_reuniao          TEXT,
         pre_ata               TEXT,
-        participantes         TEXT,
+        participantes         TEXT,         -- legado: não usado; substituído pela tabela 'presencas'
         notion_page_id        VARCHAR(255),
         notion_status_enviado VARCHAR(50),
         motivo_cancelamento   TEXT,
@@ -377,12 +377,17 @@ app.get('/api/status', async (req, res) => {
       SELECT COUNT(*) AS total FROM reservas WHERE data = $1 AND status = 'confirmada'
     `, [dataHoje]);
 
+    const pendentesRes = await pool.query(`
+      SELECT COUNT(*) AS total FROM reservas WHERE status = 'pendente'
+    `);
+
     res.json({
       salaLivre: reservaAtivaRes.rows.length === 0,
       reservaAtiva: reservaAtivaRes.rows[0] || null,
       reuniaoOnlineAtiva: reuniaoOnlineAtivaRes.rows[0] || null,
       proximaReuniao: proximaReuniaoRes.rows[0] || null,
       reunioesHoje: parseInt(reunioesHojeRes.rows[0].total, 10),
+      pendentes: parseInt(pendentesRes.rows[0].total, 10),
       horaAtual: agora
     });
   } catch (err) {
@@ -1132,7 +1137,7 @@ async function sincronizarStatusNotion() {
 
 inicializarBanco().then(() => {
   const server = app.listen(PORT, () => {
-    console.log(`\n✅ Servidor Canaã Telecom v3.0 (PostgreSQL) rodando!`);
+    console.log(`\n✅ Servidor Canaã Telecom v3.0.0 (PostgreSQL) rodando!`);
     console.log(`🌐 Acesse: http://localhost:${PORT}`);
     console.log(`🔑 Admin: ti@canaatelecom.com.br\n`);
 
