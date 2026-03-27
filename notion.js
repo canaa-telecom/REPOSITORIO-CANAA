@@ -20,14 +20,14 @@ function notionConfigurado() {
 /**
  * Mapeia o status interno para o nome EXATO da opção criada no Notion.
  *
- * As opções devem existir no banco Notion com estes nomes exatos:
- *   "Agendada" | "Em andamento" | "Concluído"
+ * As opções devem existir no banco "Calendário de Reuniões" com estes nomes:
+ *   "Agendado" | "Realizada" | "Cancelado"
  */
 const STATUS_MAP = {
-    'Agendada': 'Agendada',
-    'Em andamento': 'Em andamento',
-    'Concluída': 'Concluído',   // Notion usa "Concluído" (masculino)
-    'Cancelada': 'Cancelada',   // Requer opção "Cancelada" criada no banco Notion
+    'Agendada':      'Agendado',   // Reunião futura ou não iniciada
+    'Em andamento':  'Agendado',   // Mantém Agendado durante execução (sem opção própria)
+    'Concluída':     'Realizada',  // Nome usado no banco da empresa
+    'Cancelada':     'Cancelado',  // Nome usado no banco da empresa
 };
 
 /**
@@ -45,26 +45,38 @@ function tzOffset() {
 }
 
 /**
- * Colunas do banco Notion esperadas:
- *   Titulo       → Title
- *   Data         → Date (intervalo: horaInicio → horaFim)
- *   Status       → Status nativo do Notion
- *   Pauta        → Rich Text
- *   Responsável  → Rich Text
- *   Confirmados  → Rich Text
+ * Propriedades do banco "Agendamento de Reuniões" (conta empresa).
+ * Nomes e tipos obtidos via API (notion.js buscar_notion_db.js):
+ *
+ *   "Qual o objetivo da reunião?" → title    (campo título)
+ *   "09/02/2026"                  → date     (data/hora da reunião, start→end)
+ *   "Status"                      → status   (Agendado | Realizada | Cancelado)
+ *   "Observações"                 → rich_text (pré-ata / notas)
+ *   "Link da reunião:"            → rich_text (note o ":" no final do nome!)
+ *   "Motivo do agendamento"        → rich_text (motivo / cancelamento)
+ *
+ * Campos IGNORADOS (não podem ser preenchidos via API):
+ *   "Responsável" / "Participantes" → tipo people (requer UUID Notion)
+ *   "Pauta da Reunião"            → tipo url (seria link externo p/ doc)
+ *   "Ata da reunião"              → tipo files
  */
 function montarPropriedades(reserva, participantes = [], statusDinamico = 'Agendada') {
-    const nomesTexto = participantes.length > 0 ? participantes.join(', ') : '';
     const statusNotion = STATUS_MAP[statusDinamico];
+
+    // Monta texto de responsável + participantes para o campo Observações
+    const linhas = [];
+    if (reserva.gestor) linhas.push(`Responsável: ${reserva.gestor}`);
+    if (participantes.length > 0) linhas.push(`Participantes: ${participantes.join(', ')}`);
+    const observacoesTexto = linhas.join('\n');
 
     const props = {
         // 1. Título da reunião
-        'Titulo': {
+        'Qual o objetivo da reunião?': {
             title: [{ text: { content: reserva.titulo || 'Sem título' } }]
         },
 
-        // 2. Data com hora de início e hora de fim (com fuso horário local)
-        'Data': {
+        // 2. Data/hora da reunião (campo tem nome "09/02/2026" no banco)
+        '09/02/2026': {
             date: reserva.data ? {
                 start: reserva.horaInicio
                     ? `${reserva.data}T${reserva.horaInicio}:00${tzOffset()}`
@@ -75,23 +87,23 @@ function montarPropriedades(reserva, participantes = [], statusDinamico = 'Agend
             } : null
         },
 
-        // 3. Pauta / Pré-Ata
-        'Pauta': {
+        // 3. Responsável (nome) + Participantes como texto em Observações
+        'Observações': {
+            rich_text: [{ text: { content: observacoesTexto } }]
+        },
+
+        // 4. Pré-ata / motivo da reunião
+        'Motivo do agendamento': {
             rich_text: [{ text: { content: reserva.pre_ata || '' } }]
         },
 
-        // 4. Responsável (quem criou o agendamento)
-        'Responsável': {
-            rich_text: [{ text: { content: reserva.gestor || '' } }]
+        // 5. Link da reunião (nome inclui ":" no final — exato!)
+        'Link da reunião:': {
+            rich_text: [{ text: { content: reserva.link_reuniao || '' } }]
         },
-
-        // 5. Confirmados (nomes de quem confirmou presença)
-        'Confirmados': {
-            rich_text: [{ text: { content: nomesTexto } }]
-        }
     };
 
-    // 6. Status — só inclui se o mapeamento existir (evita erro de opção inválida)
+    // 6. Status
     if (statusNotion) {
         props['Status'] = { status: { name: statusNotion } };
     } else {
@@ -100,6 +112,7 @@ function montarPropriedades(reserva, participantes = [], statusDinamico = 'Agend
 
     return props;
 }
+
 
 /**
  * Cria uma nova página no banco do Notion com todos os dados da reserva.
@@ -169,7 +182,6 @@ async function atualizarStatusNotion(notionPageId, statusDinamico) {
 async function atualizarPaginaNotion(notionPageId, participantes = [], statusDinamico = 'Agendada') {
     if (!notionConfigurado() || !notionPageId) return;
 
-    const nomesTexto = participantes.length > 0 ? participantes.join(', ') : '';
     const statusNotion = STATUS_MAP[statusDinamico];
 
     try {
@@ -177,10 +189,9 @@ async function atualizarPaginaNotion(notionPageId, participantes = [], statusDin
             page_id: notionPageId,
             properties: {
                 ...(statusNotion ? { 'Status': { status: { name: statusNotion } } } : {}),
-                'Confirmados': { rich_text: [{ text: { content: nomesTexto } }] }
             }
         });
-        console.log(`✅ Notion: atualizada página ${notionPageId} → [${statusDinamico}] | ${nomesTexto || 'sem confirmados'}`);
+        console.log(`✅ Notion: atualizada página ${notionPageId} → [${statusDinamico}]`);
     } catch (err) {
         console.error('❌ Notion: erro ao atualizar página:', err.message);
     }
@@ -204,8 +215,9 @@ async function cancelarPaginaNotion(notionPageId, motivo = '') {
             page_id: notionPageId,
             properties: {
                 ...(statusNotion ? { 'Status': { status: { name: statusNotion } } } : {}),
-                'Motivo do Cancelamento': {
-                    rich_text: [{ text: { content: motivo || '' } }]
+                // Registra o motivo do cancelamento em Observações
+                'Observações': {
+                    rich_text: [{ text: { content: motivo ? `Cancelada: ${motivo}` : 'Reunião cancelada.' } }]
                 }
             }
         });
