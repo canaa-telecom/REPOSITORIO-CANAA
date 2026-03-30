@@ -87,12 +87,16 @@
     </button>
   </nav>
 
-  <!-- ── BANNER DE STATUS (slim) ───────────────────────────── -->
+  <!-- ── BANNER DE STATUS (multi-sala) ───────────────────────── -->
   <div id="bannerStatus"
-    class="flex items-center gap-3 px-4 sm:px-6 py-2 text-xs font-medium transition-all duration-700 bg-emerald-500/10 border-b border-emerald-400/20 text-emerald-400">
+    class="flex items-center gap-2 sm:gap-3 px-4 sm:px-6 py-2 text-xs font-medium transition-all duration-700 bg-emerald-500/10 border-b border-emerald-400/20 flex-wrap">
+    <!-- Dot + label geral -->
     <span id="bannerDot" class="w-2 h-2 rounded-full bg-emerald-400 status-dot-green flex-shrink-0"></span>
-    <span id="bannerTitulo" class="font-bold uppercase tracking-widest">SALA LIVRE</span>
-    <span id="bannerDetalhe" class="text-emerald-500/70">Nenhuma reunião presencial em andamento</span>
+    <span id="bannerTitulo" class="font-bold uppercase tracking-widest text-emerald-400">SALAS LIVRES</span>
+    <!-- Chips por sala — preenchidos pelo JS -->
+    <div id="bannerSalasChips" class="flex items-center gap-2 flex-wrap ml-1"></div>
+    <!-- Detalhe fallback (exibido quando não há chips) -->
+    <span id="bannerDetalhe" class="text-emerald-500/70 hidden"></span>
   </div>
 
   <!-- ── BANNER REUNIÃO ONLINE ─────────────────────────────── -->
@@ -223,6 +227,15 @@
             <option value="online">Online</option>
           </select>
 
+          <!-- Seletor de Sala (só para presencial) -->
+          <div id="boxSala">
+            <select id="selectSala" class="input-compact w-full [color-scheme:light] dark:[color-scheme:dark]">
+              <option value="Sala de Reunião">Sala de Reunião</option>
+              <option value="Sala do Presidente">Sala do Presidente</option>
+              <option value="Sala de Treinamento">Sala de Treinamento</option>
+            </select>
+          </div>
+
           <div id="boxLink" class="hidden">
             <input type="url" id="inputLink" placeholder="https://meet.google.com/..." class="input-compact w-full" />
           </div>
@@ -273,6 +286,50 @@
             class="flex-1 py-2.5 text-xs font-bold uppercase tracking-widest transition-all text-slate-400 border-b-2 border-transparent hover:bg-slate-50 dark:hover:bg-white/5">
             Histórico
           </button>
+        </div>
+
+        <!-- Painel de Filtros (só no histórico) -->
+        <div id="painelFiltrosHistorico" class="hidden border-b border-slate-100 dark:border-white/10 bg-slate-50 dark:bg-white/[0.02] px-3 py-2 space-y-2">
+          <div class="flex items-center justify-between">
+            <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Filtros</p>
+            <button onclick="limparFiltrosHistorico()" class="text-[10px] font-bold text-blue-500 hover:underline">Limpar</button>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[9px] font-bold uppercase tracking-widest text-slate-400 block mb-0.5">Data Inicial</label>
+              <input type="date" id="filtroDataInicio" oninput="aplicarFiltrosHistorico()"
+                class="input-compact w-full text-xs [color-scheme:light] dark:[color-scheme:dark]" />
+            </div>
+            <div>
+              <label class="text-[9px] font-bold uppercase tracking-widest text-slate-400 block mb-0.5">Data Final</label>
+              <input type="date" id="filtroDataFim" oninput="aplicarFiltrosHistorico()"
+                class="input-compact w-full text-xs [color-scheme:light] dark:[color-scheme:dark]" />
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[9px] font-bold uppercase tracking-widest text-slate-400 block mb-0.5">Status</label>
+              <select id="filtroStatus" onchange="aplicarFiltrosHistorico()"
+                class="input-compact w-full text-xs [color-scheme:light] dark:[color-scheme:dark]">
+                <option value="">Todos</option>
+                <option value="Concluída">Concluída</option>
+                <option value="Cancelada">Cancelada</option>
+                <option value="Em andamento">Em andamento</option>
+                <option value="Agendada">Agendada</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[9px] font-bold uppercase tracking-widest text-slate-400 block mb-0.5">Sala</label>
+              <select id="filtroSala" onchange="aplicarFiltrosHistorico()"
+                class="input-compact w-full text-xs [color-scheme:light] dark:[color-scheme:dark]">
+                <option value="">Todas</option>
+                <option value="Sala de Reunião">Sala de Reunião</option>
+                <option value="Sala do Presidente">Sala do Presidente</option>
+                <option value="Sala de Treinamento">Sala de Treinamento</option>
+                <option value="online">Online</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         <!-- Cabeçalho da tabela -->

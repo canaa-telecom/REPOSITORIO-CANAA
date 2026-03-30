@@ -43,7 +43,45 @@ function escHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
-function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, horaFim, modalidade, linkReuniao, nomeOrganizador, preAta }) {
+/**
+ * Gera URLs para adicionar o evento ao Google Calendar e Outlook Web.
+ */
+function gerarLinksCalendario({ tituloReuniao, data, horaInicio, horaFim, nomeOrganizador, sala, modalidade, linkReuniao }) {
+  if (!data || !horaInicio || !horaFim) return null;
+
+  // Formata datas para o padrão YYYYMMDDTHHMMSS (sem timezone — horário local)
+  const [ano, mes, dia] = data.split('-');
+  const [hIni, mIni] = horaInicio.split(':');
+  const [hFim, mFim] = horaFim.split(':');
+
+  const dtInicio = `${ano}${mes}${dia}T${hIni}${mIni}00`;
+  const dtFim    = `${ano}${mes}${dia}T${hFim}${mFim}00`;
+
+  const local = modalidade === 'presencial' ? (sala || 'Sala de Reunião') : (linkReuniao || 'Online');
+  const descricao = `Reunião organizada por ${nomeOrganizador}. Local: ${local}`;
+
+  const params = new URLSearchParams({
+    action : 'TEMPLATE',
+    text   : tituloReuniao,
+    dates  : `${dtInicio}/${dtFim}`,
+    details: descricao,
+    location: local
+  });
+  const googleUrl = `https://calendar.google.com/calendar/render?${params.toString()}`;
+
+  const outlookParams = new URLSearchParams({
+    subject  : tituloReuniao,
+    startdt  : `${ano}-${mes}-${dia}T${hIni}:${mIni}:00`,
+    enddt    : `${ano}-${mes}-${dia}T${hFim}:${mFim}:00`,
+    body     : descricao,
+    location : local
+  });
+  const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?${outlookParams.toString()}`;
+
+  return { googleUrl, outlookUrl };
+}
+
+function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, horaFim, modalidade, linkReuniao, nomeOrganizador, preAta, sala }) {
   const dataFormatada = (() => {
     if (!data) return '—';
     const [ano, mes, dia] = data.split('-');
@@ -57,6 +95,7 @@ function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, ho
   const modalidadeLabel = isOnline ? '🌐 Online' : '🏢 Presencial';
   const corPrincipal = '#1d4ed8';
   const corAcento = '#06b6d4';
+  const nomeSala = !isOnline ? (sala || 'Sala de Reunião') : null;
 
   const linkBtn = isOnline && linkReuniao ? `
     <tr>
@@ -67,6 +106,36 @@ function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, ho
                  padding: 12px 28px; border-radius: 8px; letter-spacing: 0.05em;">
           🎥 Entrar na Reunião Online
         </a>
+      </td>
+    </tr>` : '';
+
+  // Links de calendário
+  const calLinks = gerarLinksCalendario({ tituloReuniao, data, horaInicio, horaFim, nomeOrganizador, sala: nomeSala, modalidade, linkReuniao });
+  const calendarBlock = calLinks ? `
+    <tr>
+      <td align="center" style="padding: 8px 32px 20px;">
+        <p style="margin: 0 0 10px; font-size: 10px; font-weight: 700; text-transform: uppercase;
+                   letter-spacing: 0.12em; color: #64748b;">📅 Adicionar à Agenda</p>
+        <table cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+          <tr>
+            <td style="padding-right: 8px;">
+              <a href="${escHtml(calLinks.googleUrl)}" target="_blank"
+                style="display:inline-block; background: #ffffff; border: 1px solid #e2e8f0;
+                       color: #1d4ed8; text-decoration: none; font-weight: 700; font-size: 11px;
+                       padding: 8px 16px; border-radius: 8px; letter-spacing: 0.03em;">
+                🗓 Google Agenda
+              </a>
+            </td>
+            <td>
+              <a href="${escHtml(calLinks.outlookUrl)}" target="_blank"
+                style="display:inline-block; background: #ffffff; border: 1px solid #e2e8f0;
+                       color: #0078d4; text-decoration: none; font-weight: 700; font-size: 11px;
+                       padding: 8px 16px; border-radius: 8px; letter-spacing: 0.03em;">
+                📆 Outlook
+              </a>
+            </td>
+          </tr>
+        </table>
       </td>
     </tr>` : '';
 
@@ -198,7 +267,7 @@ function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, ho
                   </td>
                 </tr>
 
-                <!-- Linha: Modalidade -->
+                <!-- Linha: Modalidade / Local -->
                 <tr>
                   <td style="padding:14px 18px;">
                     <table cellpadding="0" cellspacing="0">
@@ -210,7 +279,7 @@ function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, ho
                           <p style="margin:0; font-size:10px; font-weight:700; text-transform:uppercase;
                                      letter-spacing:0.1em; color:#94a3b8;">Modalidade</p>
                           <p style="margin:2px 0 0; font-size:14px; font-weight:600; color:${isOnline ? '#7c3aed' : '#1d4ed8'};">
-                            ${modalidadeLabel}
+                            ${modalidadeLabel}${nomeSala ? ` — ${escHtml(nomeSala)}` : ''}
                           </p>
                         </td>
                       </tr>
@@ -224,6 +293,9 @@ function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, ho
 
           <!-- Botão entrar (só online) -->
           ${linkBtn}
+
+          <!-- Botões de calendário -->
+          ${calendarBlock}
 
           <!-- Pauta / Pré-Ata -->
           ${pautaBlock}
@@ -280,6 +352,7 @@ function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, ho
  * @param {string} [params.linkReuniao]     - Link da reunião (opcional, para online)
  * @param {string} params.nomeOrganizador   - Nome do criador da reunião
  * @param {string} [params.preAta]          - Pré-ata / pauta (opcional)
+ * @param {string} [params.sala]            - Nome da sala (opcional, para presencial)
  * @returns {Promise<boolean>} true se enviado com sucesso
  */
 async function enviarConviteReuniao(params) {

@@ -16,6 +16,9 @@ function abortarESolicitar(chave) {
 // Cache do último conteúdo renderizado — evita re-render desnecessário
 const _cacheJson = { dashboard: null, proximos: null, historico: null, analytics: null };
 
+// Dados brutos do histórico (para filtragem em memória)
+let _dadosBrutosHistorico = [];
+
 // Controla se a lista já teve sua primeira carga (evita "Carregando..." em background)
 const _listaCarregada = { proximos: false, historico: false };
 
@@ -200,10 +203,11 @@ function fecharModalFora(event) {
 // 5. FORMULÁRIO DINÂMICO — Modalidade
 // ------------------------------------------------------------
 
-/** Exibe/oculta o campo de link conforme a modalidade selecionada */
+/** Exibe/oculta o campo de link e de sala conforme a modalidade selecionada */
 function alternarModalidade() {
   const modalidade = document.getElementById('selectModalidade').value;
   document.getElementById('boxLink').classList.toggle('hidden', modalidade !== 'online');
+  document.getElementById('boxSala').classList.toggle('hidden', modalidade === 'online');
 }
 
 /** Atualiza o contador de caracteres da pré-ata */
@@ -234,6 +238,10 @@ async function agendarReuniao(event) {
   const horaInicio = document.getElementById('inputInicio').value;
   const horaFim = document.getElementById('inputFim').value;
   const modalidade = document.getElementById('selectModalidade').value;
+  // Sala só é relevante para presencial; online envia null
+  const sala = modalidade === 'presencial'
+    ? (document.getElementById('selectSala')?.value || 'Sala de Reunião')
+    : null;
   const link_reuniao = document.getElementById('inputLink').value.trim() || null;
   const pre_ata = document.getElementById('inputPreAta').value.trim() || null;
 
@@ -255,7 +263,7 @@ async function agendarReuniao(event) {
     const resposta = await fetch(`${URL_API}/reservas`, {
       method: 'POST',
       headers: headersAuth(),
-      body: JSON.stringify({ titulo, data, horaInicio, horaFim, modalidade, link_reuniao, pre_ata, participanteIds })
+      body: JSON.stringify({ titulo, data, horaInicio, horaFim, modalidade, sala, link_reuniao, pre_ata, participanteIds })
     });
 
     if (checar401(resposta.status)) return;
@@ -268,6 +276,7 @@ async function agendarReuniao(event) {
       mostrarModal('sucesso', resultado.mensagem, true);
       document.getElementById('formReserva').reset();
       document.getElementById('boxLink').classList.add('hidden');
+      document.getElementById('boxSala').classList.remove('hidden'); // reseta visibilidade da sala
       limparParticipantes();
       // Reseta o contador da pré-ata
       const contador = document.getElementById('contadorPreAta');
@@ -370,27 +379,56 @@ async function carregarDashboard() {
     const resStatus = await fetch(`${URL_API}/status`);
     const status = await resStatus.json();
 
-    // ── BANNER (slim) ────────────────────────────────────────
-    const banner = document.getElementById('bannerStatus');
-    const bannerTit = document.getElementById('bannerTitulo');
-    const bannerDet = document.getElementById('bannerDetalhe');
-    const bannerDot = document.getElementById('bannerDot');
+    // ── BANNER (multi-sala) ──────────────────────────────────
+    const banner     = document.getElementById('bannerStatus');
+    const bannerTit  = document.getElementById('bannerTitulo');
+    const bannerDot  = document.getElementById('bannerDot');
+    const chipsEl    = document.getElementById('bannerSalasChips');
 
-    const bannerBase = 'flex items-center gap-3 px-4 sm:px-6 py-2 text-xs font-medium transition-all duration-700 border-b';
+    const salas        = Array.isArray(status.salas) ? status.salas : [];
+    const temDadosSalas = salas.length > 0;
+    // Se não temos dados de salas, usa o campo legado como fallback seguro
+    const todasLivres   = temDadosSalas ? salas.every(s => s.livre) : (status.salaLivre !== false);
+    const algumOcupada  = salas.some(s => !s.livre);
 
-    if (status.salaLivre) {
-      banner.className = `${bannerBase} bg-emerald-500/10 border-emerald-400/20 text-emerald-400`;
-      bannerTit.textContent = 'SALA LIVRE';
-      bannerDet.textContent = status.proximaReuniao
-        ? `Próxima reunião presencial às ${status.proximaReuniao.horainicio || status.proximaReuniao.horaInicio}`
-        : 'Nenhuma reunião presencial em andamento';
+    const bannerBase = 'flex items-center gap-2 sm:gap-3 px-4 sm:px-6 py-2 text-xs font-medium transition-all duration-700 border-b flex-wrap';
+
+    if (todasLivres) {
+      banner.className = `${bannerBase} bg-emerald-500/10 border-emerald-400/20`;
+      bannerTit.textContent = 'SALAS LIVRES';
+      bannerTit.className = 'font-bold uppercase tracking-widest text-emerald-400';
       bannerDot.className = 'w-2 h-2 rounded-full bg-emerald-400 status-dot-green flex-shrink-0';
     } else {
-      banner.className = `${bannerBase} bg-red-600/10 border-red-400/20 text-red-400`;
-      bannerTit.textContent = `SALA OCUPADA 🚫 ${status.reservaAtiva?.titulo || ''}`;
-      const raFim = status.reservaAtiva?.horafim || status.reservaAtiva?.horaFim || '—';
-      bannerDet.textContent = `Uso presencial por ${status.reservaAtiva?.gestor || '—'} até ${raFim}`;
+      banner.className = `${bannerBase} bg-red-600/10 border-red-400/20`;
+      const qtdOcupadas = salas.filter(s => !s.livre).length;
+      // Evita falso positivo: 0===0 quando salas=[]
+      if (!temDadosSalas) {
+        bannerTit.textContent = 'SALA OCUPADA';
+      } else if (qtdOcupadas === salas.length) {
+        bannerTit.textContent = 'SALAS OCUPADAS';
+      } else {
+        bannerTit.textContent = `${qtdOcupadas} SALA${qtdOcupadas > 1 ? 'S' : ''} OCUPADA${qtdOcupadas > 1 ? 'S' : ''}`;
+      }
+      bannerTit.className = 'font-bold uppercase tracking-widest text-red-400';
       bannerDot.className = 'w-2 h-2 rounded-full bg-red-400 status-dot-red flex-shrink-0';
+    }
+
+    // Renderiza chips por sala
+    if (chipsEl && salas.length > 0) {
+      chipsEl.innerHTML = salas.map(s => {
+        if (s.livre) {
+          return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0"></span>${escapeHtml(s.nome)}
+          </span>`;
+        } else {
+          const ra = s.reservaAtiva;
+          const fim = ra?.horafim || ra?.horaFim || '—';
+          const titulo = ra?.titulo ? ` · ${escapeHtml(ra.titulo)}` : '';
+          return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/10 text-red-400 border border-red-500/20">
+            <span class="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0"></span>${escapeHtml(s.nome)}${titulo}<span class="opacity-60 font-normal">até ${fim}</span>
+          </span>`;
+        }
+      }).join('');
     }
 
     // ── BANNER REUNIÃO ONLINE ─────────────────────────────────
@@ -398,7 +436,6 @@ async function carregarDashboard() {
     if (bannerOnline) {
       const online = status.reuniaoOnlineAtiva;
       if (online) {
-        // PostgreSQL retorna em minúsculas; normaliza para os dois formatos
         const oIni = online.horainicio || online.horaInicio || '—';
         const oFim = online.horafim   || online.horaFim   || '—';
         bannerOnline.classList.remove('hidden');
@@ -421,34 +458,41 @@ async function carregarDashboard() {
     }
 
     // ── Título da aba ─────────────────────────────────────────
-    if (!status.salaLivre) {
-      document.title = `🔴 OCUPADA: ${status.reservaAtiva?.titulo || 'Em uso'} — Canaã Telecom`;
+    if (algumOcupada) {
+      const primeiraOcupada = salas.find(s => !s.livre);
+      document.title = `🔴 OCUPADA: ${primeiraOcupada?.reservaAtiva?.titulo || 'Em uso'} — Canaã Telecom`;
     } else if (status.reuniaoOnlineAtiva) {
       document.title = `🟣 ONLINE: ${status.reuniaoOnlineAtiva.titulo} — Canaã Telecom`;
     } else {
-      document.title = '🟢 SALA LIVRE — Canaã Telecom';
+      document.title = '🟢 SALAS LIVRES — Canaã Telecom';
     }
 
     const relogio = document.getElementById('relogioAoVivo');
     if (relogio) relogio.textContent = `🕐 ${status.horaAtual}`;
 
-    // ── CARD KPI — Sala Status (novo: sem absolute, sem big cards) ───
-    const cardStatus = document.getElementById('cardSalaStatus');
+    // ── CARD KPI — Sala Status ────────────────────────────────
+    const cardStatus  = document.getElementById('cardSalaStatus');
     const labelStatus = document.getElementById('cardSalaLabel');
     const detalheStatus = document.getElementById('cardSalaDetalhe');
-    const dotStatus = document.getElementById('statusDot');
+    const dotStatus   = document.getElementById('statusDot');
 
-    if (status.salaLivre) {
+    const qtdLivres  = salas.filter(s => s.livre).length;
+    const totalSalas = salas.length; // NÃO usa || 3: se vazio, usa texto descritivo
+
+    if (todasLivres) {
       cardStatus.className = 'p-4 border-r border-slate-200 dark:border-white/10 transition-all duration-500';
-      labelStatus.textContent = 'SALA LIVRE';
-      detalheStatus.textContent = 'Disponível';
+      labelStatus.textContent = 'STATUS DAS SALAS';
+      detalheStatus.textContent = totalSalas > 0 ? `${qtdLivres}/${totalSalas} Livres` : 'Disponível';
       dotStatus.className = 'w-2 h-2 rounded-full bg-emerald-400 status-dot-green';
       detalheStatus.className = 'text-lg font-display font-bold text-emerald-400';
       labelStatus.className = 'text-[10px] font-bold uppercase tracking-widest text-slate-400';
     } else {
       cardStatus.className = 'p-4 border-r border-slate-200 dark:border-white/10 transition-all duration-500';
-      labelStatus.textContent = 'SALA OCUPADA';
-      detalheStatus.textContent = status.reservaAtiva?.gestor || 'Em uso';
+      labelStatus.textContent = 'STATUS DAS SALAS';
+      const qtdOcup = totalSalas > 0 ? totalSalas - qtdLivres : 1;
+      detalheStatus.textContent = totalSalas > 0
+        ? `${qtdOcup}/${totalSalas} Ocupada${qtdOcup > 1 ? 's' : ''}`
+        : 'Ocupada';
       dotStatus.className = 'w-2 h-2 rounded-full bg-red-400 status-dot-red';
       detalheStatus.className = 'text-lg font-display font-bold text-red-400';
       labelStatus.className = 'text-[10px] font-bold uppercase tracking-widest text-slate-400';
@@ -475,6 +519,7 @@ async function carregarDashboard() {
   }
 }
 
+
 // ------------------------------------------------------------
 // 8. CONTROLE DE ABAS
 // ------------------------------------------------------------
@@ -490,15 +535,18 @@ function trocarAba(aba) {
   const estiloInativo = 'tab-btn flex-1 py-3.5 px-4 text-sm font-semibold uppercase tracking-widest transition-all duration-200 text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:bg-slate-50 dark:hover:bg-white/5';
 
   const cabecalho = document.getElementById('cabecalhoLista');
+  const painelFiltros = document.getElementById('painelFiltrosHistorico');
 
   if (aba === 'proximos') {
     btnProximos.className = estiloAtivo;
     btnHistorico.className = estiloInativo;
     if (cabecalho) cabecalho.classList.remove('hidden');
+    if (painelFiltros) painelFiltros.classList.add('hidden');
   } else {
     btnProximos.className = estiloInativo;
     btnHistorico.className = estiloAtivo;
     if (cabecalho) cabecalho.classList.add('hidden');
+    if (painelFiltros) painelFiltros.classList.remove('hidden');
   }
 
   carregarLista(aba, true); // true = é troca de aba, mostra "Carregando..."
@@ -547,6 +595,9 @@ async function carregarLista(aba, primeiro) {
     const reservas = await res.json();
     const novoJson = JSON.stringify(reservas);
 
+    // Armazena dados brutos para filtragem no histórico
+    if (aba === 'historico') _dadosBrutosHistorico = reservas;
+
     // Se os dados não mudaram, não toca no DOM — evita qualquer piscar.
     // Mas agora, se viemos de um "Carregando..." (sem cache), precisamos renderizar.
     // Com a lógica acima, se novoJson === cacheJson, o DOM já está atualizado via cache.
@@ -561,6 +612,17 @@ async function carregarLista(aba, primeiro) {
 
     inicializarAcoesLote();
     atualizarBarraAcaoLote();
+
+    // Reaaplica os filtros do histórico se estiverem ativos (evita perda após SSE)
+    if (aba === 'historico') {
+      const temFiltro = [
+        document.getElementById('filtroDataInicio')?.value,
+        document.getElementById('filtroDataFim')?.value,
+        document.getElementById('filtroStatus')?.value,
+        document.getElementById('filtroSala')?.value
+      ].some(v => v && v !== '');
+      if (temFiltro) aplicarFiltrosHistorico();
+    }
   } catch (err) {
     if (err.name === 'AbortError') return; // Cancelado intencionalmente
     console.error('Erro ao carregar lista:', err);
@@ -578,7 +640,7 @@ function formatarData(iso) {
   return `${dia}/${mes}/${ano}`;
 }
 
-/** Card compacto para o histórico — título, data/horário e badge de status real */
+/** Card compacto para o histórico — título, data/horário, sala e badge de status real */
 function renderCartaoHistorico(r) {
   const usuario = obterUsuario();
   const isAdmin = usuario?.role === 'admin';
@@ -587,6 +649,7 @@ function renderCartaoHistorico(r) {
   // Normaliza colunas que o PostgreSQL retorna em minúsculas
   const horaIni = r.horainicio || r.horaInicio || '—';
   const horaFi  = r.horafim    || r.horaFim    || '—';
+  const salaLabel = r.modalidade === 'online' ? 'Online' : (r.sala || 'Sala de Reunião');
   const badgesHistorico = {
     'Concluída':    '<span class="text-xs font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-white/5 px-2 py-0.5 rounded-full flex-shrink-0">Concluída</span>',
     'Cancelada':   '<span class="text-xs font-semibold text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded-full flex-shrink-0 line-through">Cancelada</span>',
@@ -607,7 +670,9 @@ function renderCartaoHistorico(r) {
         </label>` : ''}
         <div class="flex-1 min-w-0">
           <p class="text-sm font-semibold dark:text-slate-100 truncate ${r.statusDinamico === 'Cancelada' ? 'line-through opacity-60' : ''}">${titulo}</p>
-          <p class="text-xs text-slate-400 font-mono">${data} &nbsp;${horaIni}<span class="text-slate-300 dark:text-slate-600"> → </span>${horaFi}</p>
+          <p class="text-xs text-slate-400 font-mono">${data} &nbsp;${horaIni}<span class="text-slate-300 dark:text-slate-600"> → </span>${horaFi}
+            <span class="text-[10px] text-slate-300 dark:text-slate-600 ml-1">· ${escapeHtml(salaLabel)}</span>
+          </p>
         </div>
         ${badge}
       </div>
@@ -650,10 +715,11 @@ function renderCartaoReserva(r) {
   }[r.statusDinamico] || `<span class="text-[10px] text-slate-400">—</span>`;
 
   // Badge de modalidade — compacto
+  const salaLabel = r.modalidade === 'online' ? null : (r.sala || 'Sala de Reunião');
   const tipoBadge = r.modalidade === 'online'
     ? `<a href="${r.link_reuniao || '#'}" target="_blank" title="Abrir link da reunião"
          class="text-[10px] font-bold text-purple-500 dark:text-purple-400 hover:underline">Online ↗</a>`
-    : `<span class="text-[10px] text-slate-400 dark:text-slate-500">Presencial</span>`;
+    : `<span class="text-[10px] text-slate-400 dark:text-slate-500" title="${escapeHtml(salaLabel)}">${escapeHtml(salaLabel)}</span>`;
 
   // Ícone de pauta — só aparece se tiver pré-ata
   const pautaIcon = r.pre_ata ? `
@@ -1229,6 +1295,51 @@ function iniciarSSE() {
 /** Invalida o cache de uma aba e força a próxima carga a renderizar de novo */
 function invalidarCacheLista(aba) {
   if (aba) { _cacheJson[aba] = null; } else { _cacheJson.proximos = null; _cacheJson.historico = null; }
+}
+
+// ------------------------------------------------------------
+// FILTROS DO HISTÓRICO
+// ------------------------------------------------------------
+
+/** Aplica os filtros sobre os dados brutos do histórico e re-renderiza a lista */
+function aplicarFiltrosHistorico() {
+  if (abaAtiva !== 'historico') return;
+
+  const dataInicio = document.getElementById('filtroDataInicio')?.value || '';
+  const dataFim    = document.getElementById('filtroDataFim')?.value    || '';
+  const status     = document.getElementById('filtroStatus')?.value     || '';
+  const sala       = document.getElementById('filtroSala')?.value       || '';
+
+  let filtrados = _dadosBrutosHistorico.slice();
+
+  if (dataInicio) filtrados = filtrados.filter(r => r.data >= dataInicio);
+  if (dataFim)    filtrados = filtrados.filter(r => r.data <= dataFim);
+  if (status)     filtrados = filtrados.filter(r => r.statusDinamico === status);
+  if (sala) {
+    if (sala === 'online') {
+      filtrados = filtrados.filter(r => r.modalidade === 'online');
+    } else {
+      filtrados = filtrados.filter(r => r.modalidade === 'presencial' && (r.sala || 'Sala de Reunião') === sala);
+    }
+  }
+
+  const lista = document.getElementById('listaReservas');
+  lista.innerHTML = filtrados.length === 0
+    ? `<div class="text-center py-8 text-slate-400 text-sm">Nenhum resultado encontrado para os filtros aplicados.</div>`
+    : filtrados.map(r => renderCartaoHistorico(r)).join('');
+
+  inicializarAcoesLote();
+  atualizarBarraAcaoLote();
+}
+
+/** Limpa todos os filtros e restaura a lista completa */
+function limparFiltrosHistorico() {
+  const ids = ['filtroDataInicio', 'filtroDataFim', 'filtroStatus', 'filtroSala'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  aplicarFiltrosHistorico();
 }
 
 // ------------------------------------------------------------

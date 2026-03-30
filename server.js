@@ -20,6 +20,9 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
+/** Salas presenciais disponíveis no sistema */
+const SALAS_PRESENCIAIS = ['Sala de Reunião', 'Sala do Presidente', 'Sala de Treinamento'];
+
 app.use(cors()); // Aceita qualquer origem — seguro para rede interna
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
@@ -92,6 +95,7 @@ async function inicializarBanco() {
         horaFim               VARCHAR(5)   NOT NULL,
         status                VARCHAR(50)  NOT NULL DEFAULT 'confirmada' CHECK(status IN ('confirmada', 'pendente', 'cancelada')),
         modalidade            VARCHAR(50)  NOT NULL DEFAULT 'presencial' CHECK(modalidade IN ('presencial', 'online')),
+        sala                  VARCHAR(100) NOT NULL DEFAULT 'Sala de Reunião',
         link_reuniao          TEXT,
         pre_ata               TEXT,
         participantes         TEXT,         -- legado: não usado; substituído pela tabela 'presencas'
@@ -138,15 +142,15 @@ async function inicializarBanco() {
 
       // Dados de demonstração com os novos campos
       const demos = [
-        [adminId, 'Planejamento Q3', dataHoje, '08:00', '09:30', 'confirmada', 'presencial', null],
-        [adminId, 'Daily Standup', dataHoje, '10:00', '11:00', 'confirmada', 'presencial', null],
-        [adminId, 'Review de Sprint (Online)', dataHoje, '16:00', '17:00', 'confirmada', 'online', 'https://meet.google.com/abc-defg-hij'],
+        [adminId, 'Planejamento Q3', dataHoje, '08:00', '09:30', 'confirmada', 'presencial', 'Sala de Reunião', null],
+        [adminId, 'Daily Standup', dataHoje, '10:00', '11:00', 'confirmada', 'presencial', 'Sala de Reunião', null],
+        [adminId, 'Review de Sprint (Online)', dataHoje, '16:00', '17:00', 'confirmada', 'online', null, 'https://meet.google.com/abc-defg-hij'],
       ];
 
       for (const d of demos) {
         await pool.query(`
-          INSERT INTO reservas (usuario_id, titulo, data, horaInicio, horaFim, status, modalidade, link_reuniao)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          INSERT INTO reservas (usuario_id, titulo, data, horaInicio, horaFim, status, modalidade, sala, pre_ata, link_reuniao)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         `, d);
       }
     }
@@ -191,6 +195,10 @@ async function migrarBanco() {
     if (!colunas.includes('motivo_cancelamento')) {
       await pool.query("ALTER TABLE reservas ADD COLUMN motivo_cancelamento TEXT");
       console.log('✅ Migração: coluna motivo_cancelamento adicionada');
+    }
+    if (!colunas.includes('sala')) {
+      await pool.query("ALTER TABLE reservas ADD COLUMN sala VARCHAR(100) NOT NULL DEFAULT 'Sala de Reunião'");
+      console.log('✅ Migração: coluna sala adicionada');
     }
 
   } catch (err) {
@@ -349,13 +357,25 @@ app.get('/api/status', async (req, res) => {
     const agora = horaAtual();
     const dataHoje = hoje();
 
-    // Reunião presencial ativa agora
-    const reservaAtivaRes = await pool.query(`
-      SELECT r.*, u.nome AS gestor
+    // Query salas presenciais ativas agora
+    const salaStatusRes = await pool.query(`
+      SELECT r.titulo, r.sala, r.horainicio, r.horafim, u.nome AS gestor
       FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
       WHERE r.data = $1 AND r.status = 'confirmada' AND r.modalidade = 'presencial'
         AND r.horainicio <= $2 AND r.horafim > $3
     `, [dataHoje, agora, agora]);
+
+    // Monta um Map sala→reunião (trim para evitar espaços extras)
+    const salaOcupadaMap = new Map(
+      salaStatusRes.rows.map(r => [String(r.sala || 'Sala de Reunião').trim(), r])
+    );
+
+    const salas = SALAS_PRESENCIAIS.map(nome => {
+      const reservaAtiva = salaOcupadaMap.get(nome.trim()) || null;
+      return { nome, livre: !reservaAtiva, reservaAtiva };
+    });
+    const todasLivres = salas.every(s => s.livre);
+    const primeiraOcupada = salas.find(s => !s.livre)?.reservaAtiva || null;
 
     // Reunião online ativa agora
     const reuniaoOnlineAtivaRes = await pool.query(`
@@ -382,8 +402,11 @@ app.get('/api/status', async (req, res) => {
     `);
 
     res.json({
-      salaLivre: reservaAtivaRes.rows.length === 0,
-      reservaAtiva: reservaAtivaRes.rows[0] || null,
+      // Status por sala individual
+      salas,
+      // Compat backward — true se TODAS as salas presenciais estão livres
+      salaLivre: todasLivres,
+      reservaAtiva: primeiraOcupada,
       reuniaoOnlineAtiva: reuniaoOnlineAtivaRes.rows[0] || null,
       proximaReuniao: proximaReuniaoRes.rows[0] || null,
       reunioesHoje: parseInt(reunioesHojeRes.rows[0].total, 10),
@@ -449,7 +472,7 @@ app.post('/api/reservas', autenticar, async (req, res) => {
   try {
     const {
       titulo, data, horaInicio, horaFim,
-      modalidade = 'presencial', link_reuniao,
+      modalidade = 'presencial', sala = 'Sala de Reunião', link_reuniao,
       pre_ata, participanteIds = []
     } = req.body;
     const usuario_id = req.usuario.id;
@@ -479,13 +502,14 @@ app.post('/api/reservas', autenticar, async (req, res) => {
       return res.status(400).json({ erro: true, mensagem: 'A hora de início deve ser anterior ao término.' });
     }
 
+    // ── Conflito de sala (presencial, por sala individual) ──
     if (modalidade === 'presencial') {
-      const reservasDaData = await pool.query(`
+      const reservasDaSala = await pool.query(`
         SELECT * FROM reservas
-        WHERE data = $1 AND status = 'confirmada' AND modalidade = 'presencial'
-      `, [data]);
+        WHERE data = $1 AND status = 'confirmada' AND modalidade = 'presencial' AND sala = $2
+      `, [data, sala]);
 
-      const conflito = reservasDaData.rows.find(r => {
+      const conflito = reservasDaSala.rows.find(r => {
         const rInicio = r.horainicio || r.horaInicio;
         const rFim = r.horafim || r.horaFim;
         return temConflito(horaInicio, horaFim, rInicio, rFim);
@@ -497,24 +521,53 @@ app.post('/api/reservas', autenticar, async (req, res) => {
         return res.status(409).json({
           erro: true,
           tipoConflito: 'sala',
-          mensagem: `Conflito de horário! A sala já está ocupada por "${conflito.titulo}" das ${cInicio} às ${cFim}.`
+          mensagem: `Conflito de horário! A ${sala} já está ocupada por "${conflito.titulo}" das ${cInicio} às ${cFim}.`
+        });
+      }
+    }
+
+    // ── Conflito de participantes ──
+    const idsValidos = Array.isArray(participanteIds)
+      ? participanteIds.map(id => parseInt(id)).filter(id => !isNaN(id))
+      : [];
+
+    if (idsValidos.length > 0) {
+      const confPart = await pool.query(`
+        SELECT p.usuario_id, u.nome AS "nomeParticipante", r.titulo AS "tituloConflito",
+               r.horainicio, r.horafim
+        FROM presencas p
+        JOIN reservas r ON r.id = p.reserva_id
+        JOIN ${TABLE_USERS} u ON u.id = p.usuario_id
+        WHERE p.usuario_id = ANY($1::int[])
+          AND r.data = $2
+          AND r.status = 'confirmada'
+      `, [idsValidos, data]);
+
+      const participanteConflito = confPart.rows.find(row => {
+        const rInicio = row.horainicio || row.horaInicio;
+        const rFim = row.horafim || row.horaFim;
+        return temConflito(horaInicio, horaFim, rInicio, rFim);
+      });
+
+      if (participanteConflito) {
+        const pIni = participanteConflito.horainicio;
+        const pFim = participanteConflito.horafim;
+        return res.status(409).json({
+          erro: true,
+          tipoConflito: 'participante',
+          mensagem: `Conflito de horário! ${participanteConflito.nomeParticipante} já está na reunião "${participanteConflito.tituloConflito}" das ${pIni} às ${pFim}.`
         });
       }
     }
 
     // Cria a reserva
     const insertRes = await pool.query(`
-      INSERT INTO reservas (usuario_id, titulo, data, horaInicio, horaFim, status, modalidade, link_reuniao, pre_ata)
-      VALUES ($1, $2, $3, $4, $5, 'confirmada', $6, $7, $8)
+      INSERT INTO reservas (usuario_id, titulo, data, horaInicio, horaFim, status, modalidade, sala, link_reuniao, pre_ata)
+      VALUES ($1, $2, $3, $4, $5, 'confirmada', $6, $7, $8, $9)
       RETURNING id
-    `, [usuario_id, titulo, data, horaInicio, horaFim, modalidade, link_reuniao || null, pre_ata || null]);
+    `, [usuario_id, titulo, data, horaInicio, horaFim, modalidade, sala, link_reuniao || null, pre_ata || null]);
 
     const novaId = insertRes.rows[0].id;
-
-    // Insere participantes na tabela presencas (garante unicidade e ignora duplicatas)
-    const idsValidos = Array.isArray(participanteIds)
-      ? participanteIds.map(id => parseInt(id)).filter(id => !isNaN(id))
-      : [];
 
     for (const pid of idsValidos) {
       await pool.query(
@@ -560,17 +613,18 @@ app.post('/api/reservas', autenticar, async (req, res) => {
         `SELECT id, nome, email FROM ${TABLE_USERS} WHERE id = ANY($1::int[])`,
         [idsValidos]
       ).then(({ rows: participantesInfo }) => {
-        const horaInicio = novaReserva.horainicio || novaReserva.horaInicio;
-        const horaFim = novaReserva.horafim || novaReserva.horaFim;
+        const horaInicioEmail = novaReserva.horainicio || novaReserva.horaInicio;
+        const horaFimEmail = novaReserva.horafim || novaReserva.horaFim;
         for (const p of participantesInfo) {
           enviarConviteReuniao({
             emailDestinatario: p.email,
             nomeParticipante: p.nome,
             tituloReuniao: novaReserva.titulo,
             data: novaReserva.data,
-            horaInicio,
-            horaFim,
+            horaInicio: horaInicioEmail,
+            horaFim: horaFimEmail,
             modalidade: novaReserva.modalidade,
+            sala: novaReserva.sala || null,
             linkReuniao: novaReserva.link_reuniao || null,
             nomeOrganizador: novaReserva.gestor,
             preAta: novaReserva.pre_ata || null
