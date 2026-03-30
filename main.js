@@ -98,6 +98,16 @@ function init() {
     if (chips && dropdown && !chips.contains(e.target) && !dropdown.contains(e.target)) {
       dropdown.classList.add('hidden');
     }
+
+    // Fecha o dropdown de filtros ao clicar fora do painel de filtros
+    const painelFiltros = document.getElementById('painelFiltrosHistorico');
+    const filtrosCorpo  = document.getElementById('filtrosCorpo');
+    if (filtrosCorpo?.classList.contains('filtros-aberto') &&
+        painelFiltros && !painelFiltros.contains(e.target)) {
+      filtrosCorpo.classList.remove('filtros-aberto');
+      const chevron = document.getElementById('chevronFiltros');
+      if (chevron) chevron.style.transform = '';
+    }
   });
 
   // Carrega tudo
@@ -1104,16 +1114,30 @@ async function apagarConcluidas() {
 // ------------------------------------------------------------
 
 function inicializarAcoesLote() {
-  const checkTodas = document.getElementById('checkTodas');
-  const containerCheckTodas = document.getElementById('containerCheckTodas');
-  if (checkTodas && containerCheckTodas) {
-    checkTodas.checked = false;
-    const temChecks = document.querySelectorAll('.check-reserva').length > 0;
-    const usuario = obterUsuario();
-    if (usuario?.role === 'admin' && temChecks) {
-      containerCheckTodas.classList.remove('hidden');
+  const usuario = obterUsuario();
+  const temChecks = document.querySelectorAll('.check-reserva').length > 0;
+
+  // Próximos: usa containerCheckTodasProximos
+  const containerProximos = document.getElementById('containerCheckTodasProximos');
+  const checkProximos = document.getElementById('checkTodasProximos');
+  if (containerProximos && checkProximos) {
+    checkProximos.checked = false;
+    if (usuario?.role === 'admin' && temChecks && abaAtiva === 'proximos') {
+      containerProximos.classList.remove('hidden');
     } else {
-      containerCheckTodas.classList.add('hidden');
+      containerProximos.classList.add('hidden');
+    }
+  }
+
+  // Histórico: usa containerCheckTodas
+  const containerHistorico = document.getElementById('containerCheckTodas');
+  const checkHistorico = document.getElementById('checkTodas');
+  if (containerHistorico && checkHistorico) {
+    checkHistorico.checked = false;
+    if (usuario?.role === 'admin' && temChecks && abaAtiva === 'historico') {
+      containerHistorico.classList.remove('hidden');
+    } else {
+      containerHistorico.classList.add('hidden');
     }
   }
 }
@@ -1129,10 +1153,12 @@ function atualizarBarraAcaoLote() {
   const total = document.querySelectorAll('.check-reserva').length;
   const barra = document.getElementById('barraAcaoLote');
   const texto = document.getElementById('textoAcaoLote');
-  const checkTodas = document.getElementById('checkTodas');
 
-  if (checkTodas && total > 0) {
-    checkTodas.checked = (selecionadas === total);
+  // Sincroniza o estado do "selecionar todos" da aba ativa
+  const idCheck = abaAtiva === 'historico' ? 'checkTodas' : 'checkTodasProximos';
+  const checkEl = document.getElementById(idCheck);
+  if (checkEl && total > 0) {
+    checkEl.checked = (selecionadas === total);
   }
 
   if (selecionadas > 0) {
@@ -1328,6 +1354,14 @@ function aplicarFiltrosHistorico() {
     ? `<div class="text-center py-8 text-slate-400 text-sm">Nenhum resultado encontrado para os filtros aplicados.</div>`
     : filtrados.map(r => renderCartaoHistorico(r)).join('');
 
+  // Exibe o botão "Limpar filtros" se houver filtro ativo
+  const temFiltro = dataInicio || dataFim || status || sala;
+  const btnLimpar = document.getElementById('btnLimparFiltros');
+  if (btnLimpar) {
+    btnLimpar.classList.toggle('hidden', !temFiltro);
+    btnLimpar.classList.toggle('flex', !!temFiltro);
+  }
+
   inicializarAcoesLote();
   atualizarBarraAcaoLote();
 }
@@ -1339,7 +1373,23 @@ function limparFiltrosHistorico() {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
+  const btnLimpar = document.getElementById('btnLimparFiltros');
+  if (btnLimpar) { btnLimpar.classList.add('hidden'); btnLimpar.classList.remove('flex'); }
   aplicarFiltrosHistorico();
+}
+
+/**
+ * Expande/colapsa o painel de inputs de filtro do histórico.
+ * Usa classe CSS 'filtros-aberto' para animação suave via max-height + opacity.
+ */
+function toggleFiltrosHistorico() {
+  const corpo   = document.getElementById('filtrosCorpo');
+  const chevron = document.getElementById('chevronFiltros');
+  if (!corpo) return;
+
+  const aberto = corpo.classList.contains('filtros-aberto');
+  corpo.classList.toggle('filtros-aberto', !aberto);
+  if (chevron) chevron.style.transform = aberto ? '' : 'rotate(90deg)';
 }
 
 // ------------------------------------------------------------
