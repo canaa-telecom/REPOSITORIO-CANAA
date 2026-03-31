@@ -386,7 +386,8 @@ function limparParticipantes() {
 // ------------------------------------------------------------
 async function carregarDashboard() {
   try {
-    const resStatus = await fetch(`${URL_API}/status`);
+    const resStatus = await fetch(`${URL_API}/status`, { headers: headersAuth() });
+    if (checar401(resStatus.status)) return;
     const status = await resStatus.json();
 
     // ── BANNER (multi-sala) ──────────────────────────────────

@@ -354,34 +354,16 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Inputs do filtro — tema consistente sem color-scheme nativo */
-#filtrosCorpo input[type="date"],
-#filtrosCorpo select {
-  background-color: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 0.5rem;
-  color: #e2e8f0;
-  font-size: 0.75rem;
-  padding: 0.4rem 0.65rem;
-  width: 100%;
-  outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-:not(.dark) #filtrosCorpo input[type="date"],
-:not(.dark) #filtrosCorpo select {
-  background-color: #f8fafc;
-  border-color: #e2e8f0;
-  color: #1e293b;
-}
-
+/* Filtros do histórico — CSS cuida apenas do focus ring e da seta do select.
+   Background, border e cor de texto são controlados pelo Tailwind no HTML. */
 #filtrosCorpo input[type="date"]:focus,
 #filtrosCorpo select:focus {
-  border-color: #06b6d4;
+  outline: none;
+  border-color: #06b6d4 !important;
   box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.15);
 }
 
-/* Seta do select nativa — escondida em favor do estilo CSS */
+/* Seta do select — substitui a seta nativa por SVG customizado */
 #filtrosCorpo select {
   -webkit-appearance: none;
   appearance: none;

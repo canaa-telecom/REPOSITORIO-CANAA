@@ -352,7 +352,7 @@ app.post('/api/login', async (req, res) => {
 });
 
 // ── GET /api/status ──────────────────────────────────────────
-app.get('/api/status', async (req, res) => {
+app.get('/api/status', autenticar, async (req, res) => {
   try {
     const agora = horaAtual();
     const dataHoje = hoje();
@@ -740,7 +740,7 @@ app.delete('/api/reservas/:id', autenticar, async (req, res) => {
     }
 
     if (req.usuario.role !== 'admin' && reserva.usuario_id !== req.usuario.id) {
-      return res.status(403).json({ erro: true, mensagem: 'Você só pode cancelar suas próprias reservas.' });
+      return res.status(403).json({ erro: true, mensagem: 'Você não tem permissão para apagar esta reunião.' });
     }
 
     await pool.query('DELETE FROM reservas WHERE id = $1', [id]);
@@ -980,14 +980,25 @@ app.delete('/api/historico/concluidas', autenticar, apenasAdmin, async (req, res
     const agora = horaAtual();
     const dataHoje = hoje();
 
+    // Busca os notion_page_id ANTES de deletar, para arquivar no Notion
+    const paraArquivarRes = await pool.query(`
+      SELECT notion_page_id FROM reservas
+      WHERE status = 'confirmada'
+        AND notion_page_id IS NOT NULL
+        AND (
+          data < $1
+          OR (data = $1 AND horafim <= $2)
+        )
+    `, [dataHoje, agora]);
+
     const delRes = await pool.query(`
       DELETE FROM reservas
       WHERE status = 'confirmada'
         AND (
           data < $1
-          OR (data = $2 AND horafim <= $3)
+          OR (data = $1 AND horafim <= $2)
         )
-    `, [dataHoje, dataHoje, agora]);
+    `, [dataHoje, agora]);
 
     res.json({
       erro: false,
@@ -995,6 +1006,13 @@ app.delete('/api/historico/concluidas', autenticar, apenasAdmin, async (req, res
       apagadas: delRes.rowCount
     });
     notificarClientes();
+
+    // Arquiva páginas no Notion de forma assíncrona (não bloqueia a resposta)
+    paraArquivarRes.rows.forEach(r => {
+      arquivarPaginaNotion(r.notion_page_id).catch(err =>
+        console.error(`❌ Notion: erro ao arquivar página ${r.notion_page_id}:`, err.message)
+      );
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ erro: true, mensagem: 'Erro interno ao excluir concluídas' });

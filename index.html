@@ -344,21 +344,36 @@
                 <label class="text-[9px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">
                   De
                 </label>
-                <input type="date" id="filtroDataInicio" oninput="aplicarFiltrosHistorico()" />
+                <input type="date" id="filtroDataInicio" oninput="aplicarFiltrosHistorico()"
+                  class="w-full rounded-lg text-xs px-2.5 py-1.5 outline-none transition-all
+                         bg-slate-100 dark:bg-black/30
+                         border border-slate-200 dark:border-white/[0.08]
+                         text-slate-800 dark:text-slate-200
+                         [color-scheme:light] dark:[color-scheme:dark]" />
               </div>
               <!-- Data Final -->
               <div class="flex flex-col gap-1">
                 <label class="text-[9px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">
                   Até
                 </label>
-                <input type="date" id="filtroDataFim" oninput="aplicarFiltrosHistorico()" />
+                <input type="date" id="filtroDataFim" oninput="aplicarFiltrosHistorico()"
+                  class="w-full rounded-lg text-xs px-2.5 py-1.5 outline-none transition-all
+                         bg-slate-100 dark:bg-black/30
+                         border border-slate-200 dark:border-white/[0.08]
+                         text-slate-800 dark:text-slate-200
+                         [color-scheme:light] dark:[color-scheme:dark]" />
               </div>
               <!-- Status -->
               <div class="flex flex-col gap-1">
                 <label class="text-[9px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">
                   Status
                 </label>
-                <select id="filtroStatus" onchange="aplicarFiltrosHistorico()">
+                <select id="filtroStatus" onchange="aplicarFiltrosHistorico()"
+                  class="w-full rounded-lg text-xs px-2.5 py-1.5 outline-none transition-all cursor-pointer
+                         bg-slate-100 dark:bg-black/30
+                         border border-slate-200 dark:border-white/[0.08]
+                         text-slate-800 dark:text-slate-200
+                         [color-scheme:light] dark:[color-scheme:dark]">
                   <option value="">Todos</option>
                   <option value="Concluída">Concluída</option>
                   <option value="Cancelada">Cancelada</option>
@@ -371,7 +386,12 @@
                 <label class="text-[9px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">
                   Sala
                 </label>
-                <select id="filtroSala" onchange="aplicarFiltrosHistorico()">
+                <select id="filtroSala" onchange="aplicarFiltrosHistorico()"
+                  class="w-full rounded-lg text-xs px-2.5 py-1.5 outline-none transition-all cursor-pointer
+                         bg-slate-100 dark:bg-black/30
+                         border border-slate-200 dark:border-white/[0.08]
+                         text-slate-800 dark:text-slate-200
+                         [color-scheme:light] dark:[color-scheme:dark]">
                   <option value="">Todas</option>
                   <option value="Sala de Reunião">Sala de Reunião</option>
                   <option value="Sala do Presidente">Sala do Presidente</option>
