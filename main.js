@@ -804,7 +804,7 @@ function renderCartaoReserva(r) {
         <!-- Horário -->
         <div class="flex-shrink-0 w-[68px]">
           <p class="text-[10px] text-slate-400 font-mono leading-none">${dataDDMMYYYY}</p>
-          <p class="text-xs font-bold text-blue-600 dark:text-canaa-cyan leading-snug mt-0.5">${r.horaInicio}<span class="text-slate-400 dark:text-slate-500 font-normal text-[10px]">→${r.horaFim}</span></p>
+          <p class="text-xs font-bold text-blue-600 dark:text-canaa-cyan leading-snug mt-0.5">${r.horaInicio || r.horainicio || '—'}<span class="text-slate-400 dark:text-slate-500 font-normal text-[10px]">→${r.horaFim || r.horafim || '—'}</span></p>
         </div>
 
         <!-- Título + gestor -->
