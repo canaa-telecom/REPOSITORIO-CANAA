@@ -63,9 +63,7 @@ function checar401(status) {
   return false;
 }
 
-// ------------------------------------------------------------
-// 2. INICIALIZAÇÃO
-// ------------------------------------------------------------
+// ── 2. INICIALIZAÇÃO ──────────────────────────────────────────────────────────
 function init() {
   if (!obterToken()) { window.location.href = '/login.html'; return; }
 
@@ -120,9 +118,7 @@ function init() {
   atualizarToggle(isDark);
 }
 
-// ------------------------------------------------------------
-// 3. TEMA
-// ------------------------------------------------------------
+// ── 3. TEMA ─────────────────────────────────────────────────────────────────────
 
 /** Move a bolinha do toggle para a posição correta */
 function atualizarToggle(isDark) {
@@ -148,9 +144,7 @@ function alternarTema() {
   localStorage.setItem('canaa_tema', isDark ? 'dark' : 'light');
 }
 
-// ------------------------------------------------------------
-// 4. MODAL POPUP
-// ------------------------------------------------------------
+// ── 4. MODAL POPUP ──────────────────────────────────────────────────────────────
 
 /**
  * Exibe o modal popup centrado na tela.
@@ -209,9 +203,7 @@ function fecharModalFora(event) {
   if (event.target === document.getElementById('modalOverlay')) fecharModal();
 }
 
-// ------------------------------------------------------------
-// 5. FORMULÁRIO DINÂMICO — Modalidade
-// ------------------------------------------------------------
+// ── 5. FORMULÁRIO DINÂMICO — Modalidade ────────────────────────────────────────
 
 /** Exibe/oculta o campo de link e de sala conforme a modalidade selecionada */
 function alternarModalidade() {
@@ -237,9 +229,7 @@ function atualizarContadorPreAta(el) {
   }
 }
 
-// ------------------------------------------------------------
-// 6. ENVIAR NOVA RESERVA
-// ------------------------------------------------------------
+// ── 6. ENVIAR NOVA RESERVA ──────────────────────────────────────────────────────
 async function agendarReuniao(event) {
   event.preventDefault();
 
@@ -304,9 +294,7 @@ async function agendarReuniao(event) {
   }
 }
 
-// ------------------------------------------------------------
-// PARTICIPANTES — Seletor no formulário
-// ------------------------------------------------------------
+// ── PARTICIPANTES — Seletor no formulário ──────────────────────────────────────
 
 /** Busca todos os usuários do sistema e popula a lista de participantes */
 async function carregarUsuariosParticipantes() {
@@ -381,9 +369,7 @@ function limparParticipantes() {
   document.getElementById('participantesDropdown')?.classList.add('hidden');
 }
 
-// ------------------------------------------------------------
-// 7. DASHBOARD — Banner e cards de métricas
-// ------------------------------------------------------------
+// ── 7. DASHBOARD — Banner e cards de métricas ──────────────────────────────────
 async function carregarDashboard() {
   try {
     const resStatus = await fetch(`${URL_API}/status`, { headers: headersAuth() });
@@ -531,9 +517,7 @@ async function carregarDashboard() {
 }
 
 
-// ------------------------------------------------------------
-// 8. CONTROLE DE ABAS
-// ------------------------------------------------------------
+// ── 8. CONTROLE DE ABAS ─────────────────────────────────────────────────────────
 
 /** Alterna entre as abas "Próximos" e "Histórico" */
 function trocarAba(aba) {
@@ -563,9 +547,7 @@ function trocarAba(aba) {
   carregarLista(aba, true); // true = é troca de aba, mostra "Carregando..."
 }
 
-// ------------------------------------------------------------
-// 9. CARREGAR LISTA DE RESERVAS
-// ------------------------------------------------------------
+// ── 9. CARREGAR LISTA DE RESERVAS ───────────────────────────────────────────────
 
 /** Carrega a lista de acordo com a aba: 'proximos' ou 'historico'
  *  @param {string} aba - 'proximos' ou 'historico'
@@ -844,58 +826,71 @@ function togglePreAta(id) {
   chevron.style.transform = box.classList.contains('hidden') ? '' : 'rotate(90deg)';
 }
 
-// ------------------------------------------------------------
-// CANCELAR REUNIÃO (somente o criador)
-// ------------------------------------------------------------
+// ── CANCELAR REUNIÃO — somente o criador ────────────────────────────────────────
 
-/** Abre o modal de confirmação com campo de motivo para cancelar uma reunião */
-function solicitarCancelamento(id, titulo) {
-  mostrarModal('aviso', `Cancelar a reunião "${titulo}"?`);
-
-  // Limpa botões anteriores
+/**
+ * Helper interno: injeta botões Sim/Não no modal ativo.
+ * @param {string} textoBotao  - Label do botão de confirmação
+ * @param {string} classeBotao - Classes Tailwind do botão de confirmação
+ * @param {Function} onConfirmar - Callback ao clicar em Sim
+ * @param {boolean} [comMotivo] - Se true, injeta textarea de motivo antes dos botões
+ */
+function _modalConfirmar(textoBotao, classeBotao, onConfirmar, comMotivo = false) {
   document.getElementById('adminConfirmarBtn')?.remove();
   document.getElementById('adminCancelarBtn')?.remove();
   document.getElementById('cancelMotivoPainel')?.remove();
 
-  const barWrap = document.getElementById('modalBarWrap');
+  const barWrap   = document.getElementById('modalBarWrap');
   const modalCard = document.getElementById('modalCard');
+  const inserir   = el => barWrap ? modalCard.insertBefore(el, barWrap) : modalCard.appendChild(el);
 
-  // Textarea de motivo
-  const motivoPainel = document.createElement('div');
-  motivoPainel.id = 'cancelMotivoPainel';
-  motivoPainel.className = 'mt-3';
-  motivoPainel.innerHTML = `
-    <textarea id="cancelMotivoTexto" rows="2" maxlength="300" placeholder="Motivo do cancelamento (opcional)"
-      class="w-full text-xs rounded-lg bg-white/5 border border-white/10 text-slate-300 placeholder-slate-500 px-3 py-2 resize-none focus:outline-none focus:border-orange-400 transition-colors"></textarea>
-    <p class="text-[10px] text-slate-500 mt-0.5 text-right">Máx. 300 caracteres</p>
-  `;
+  let motivoPainel = null;
+  if (comMotivo) {
+    motivoPainel = document.createElement('div');
+    motivoPainel.id = 'cancelMotivoPainel';
+    motivoPainel.className = 'mt-3';
+    motivoPainel.innerHTML = `
+      <textarea id="cancelMotivoTexto" rows="2" maxlength="300" placeholder="Motivo do cancelamento (opcional)"
+        class="w-full text-xs rounded-lg bg-white/5 border border-white/10 text-slate-300 placeholder-slate-500 px-3 py-2 resize-none focus:outline-none focus:border-orange-400 transition-colors"></textarea>
+      <p class="text-[10px] text-slate-500 mt-0.5 text-right">Máx. 300 caracteres</p>
+    `;
+    inserir(motivoPainel);
+  }
 
-  // Botões
   const botoesDiv = document.createElement('div');
-  botoesDiv.className = 'flex gap-2 mt-3 justify-end';
+  botoesDiv.className = `flex gap-2 ${comMotivo ? 'mt-3' : 'mt-4'} justify-end`;
 
   const btnNao = document.createElement('button');
   btnNao.id = 'adminCancelarBtn';
   btnNao.textContent = 'Não';
   btnNao.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-all';
-  btnNao.onclick = () => { motivoPainel.remove(); botoesDiv.remove(); fecharModal(); };
+  btnNao.onclick = () => { motivoPainel?.remove(); botoesDiv.remove(); fecharModal(); };
 
   const btnSim = document.createElement('button');
   btnSim.id = 'adminConfirmarBtn';
-  btnSim.textContent = 'Sim, cancelar';
-  btnSim.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-orange-500 hover:bg-orange-600 text-white transition-all';
+  btnSim.textContent = textoBotao;
+  btnSim.className = classeBotao;
   btnSim.onclick = () => {
-    const motivo = document.getElementById('cancelMotivoTexto')?.value.trim() || '';
-    motivoPainel.remove();
+    const motivo = comMotivo ? (document.getElementById('cancelMotivoTexto')?.value.trim() || '') : null;
+    motivoPainel?.remove();
     botoesDiv.remove();
     fecharModal();
-    executarCancelamento(id, motivo);
+    onConfirmar(motivo);
   };
 
   botoesDiv.appendChild(btnNao);
   botoesDiv.appendChild(btnSim);
-  barWrap ? modalCard.insertBefore(motivoPainel, barWrap) : modalCard.appendChild(motivoPainel);
-  barWrap ? modalCard.insertBefore(botoesDiv, barWrap) : modalCard.appendChild(botoesDiv);
+  inserir(botoesDiv);
+}
+
+function solicitarCancelamento(id, titulo) {
+  mostrarModal('aviso', `Cancelar a reunião "${titulo}"?`);
+  _modalConfirmar(
+    'Sim, cancelar',
+    'px-4 py-1.5 text-xs font-bold rounded-lg bg-orange-500 hover:bg-orange-600 text-white transition-all',
+    (motivo) => executarCancelamento(id, motivo),
+    true
+  );
 }
 
 /** Chama a API para cancelar a reunião e atualiza o card inline */
@@ -970,9 +965,7 @@ async function confirmarPresenca(reservaId) {
   }
 }
 
-// ------------------------------------------------------------
-// 10. ANALYTICS — Cards de top usuários
-// ------------------------------------------------------------
+// ── 10. ANALYTICS ───────────────────────────────────────────────────────────────
 async function carregarAnalytics() {
   try {
     const res = await fetch(`${URL_API}/estatisticas`, { headers: headersAuth() });
@@ -1007,107 +1000,47 @@ async function carregarAnalytics() {
   }
 }
 
-// ------------------------------------------------------------
-// ADMIN — Apagar reunião individual
+// ── ADMIN — Apagar reunião individual ──────────────────────────────────────────
 async function cancelarReserva(id, titulo) {
-  // Monta o modal de confirmação
   mostrarModal('aviso', `Deseja apagar definitivamente a reunião "${titulo}"? Esta ação não pode ser desfeita.`);
-
-  // Remove botões anteriores se existirem (re-uso)
-  document.getElementById('adminConfirmarBtn')?.remove();
-  document.getElementById('adminCancelarBtn')?.remove();
-
-  const barWrap = document.getElementById('modalBarWrap');
-  const modalCard = document.getElementById('modalCard');
-
-  // Cria barra de botões
-  const botoesDiv = document.createElement('div');
-  botoesDiv.className = 'flex gap-2 mt-4 justify-end';
-
-  const btnCancelar = document.createElement('button');
-  btnCancelar.id = 'adminCancelarBtn';
-  btnCancelar.textContent = 'Não';
-  btnCancelar.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-all';
-  btnCancelar.onclick = () => { botoesDiv.remove(); fecharModal(); };
-
-  const btnConfirmar = document.createElement('button');
-  btnConfirmar.id = 'adminConfirmarBtn';
-  btnConfirmar.textContent = 'Sim, apagar';
-  btnConfirmar.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all';
-  btnConfirmar.onclick = async () => {
-    botoesDiv.remove();
-    fecharModal();
-    try {
-      const res = await fetch(`${URL_API}/reservas/${id}`, {
-        method: 'DELETE',
-        headers: headersAuth()
-      });
-      if (checar401(res.status)) return;
-      const dados = await res.json();
-      document.getElementById(`card-reserva-${id}`)?.remove();
-      mostrarModal('sucesso', dados.mensagem, true);
-      carregarDashboard();
-      carregarAnalytics();
-    } catch (err) {
-      mostrarModal('erro', 'Erro ao apagar a reunião.');
+  _modalConfirmar(
+    'Sim, apagar',
+    'px-4 py-1.5 text-xs font-bold rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all',
+    async () => {
+      try {
+        const res = await fetch(`${URL_API}/reservas/${id}`, { method: 'DELETE', headers: headersAuth() });
+        if (checar401(res.status)) return;
+        const dados = await res.json();
+        document.getElementById(`card-reserva-${id}`)?.remove();
+        mostrarModal('sucesso', dados.mensagem, true);
+        carregarDashboard();
+        carregarAnalytics();
+      } catch { mostrarModal('erro', 'Erro ao apagar a reunião.'); }
     }
-  };
-
-  botoesDiv.appendChild(btnCancelar);
-  botoesDiv.appendChild(btnConfirmar);
-  // Insere antes da barra de progresso (ou no final do card)
-  barWrap ? modalCard.insertBefore(botoesDiv, barWrap) : modalCard.appendChild(botoesDiv);
+  );
 }
 
-// ADMIN — Apagar todas as reuniões concluídas
-// ------------------------------------------------------------
+// ── ADMIN — Apagar todas as reuniões concluídas ──────────────────────────────
 async function apagarConcluidas() {
-  // Usa o modal customizado em vez do window.confirm nativo
   mostrarModal('aviso', 'Deseja apagar todas as reuniões com status "Concluída"? Esta ação não pode ser desfeita.');
-
-  // Remove botões anteriores se existirem
-  document.getElementById('adminConfirmarBtn')?.remove();
-  document.getElementById('adminCancelarBtn')?.remove();
-
-  const barWrap = document.getElementById('modalBarWrap');
-  const modalCard = document.getElementById('modalCard');
-
-  const botoesDiv = document.createElement('div');
-  botoesDiv.className = 'flex gap-2 mt-4 justify-end';
-
-  const btnCancelar = document.createElement('button');
-  btnCancelar.id = 'adminCancelarBtn';
-  btnCancelar.textContent = 'Não';
-  btnCancelar.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-all';
-  btnCancelar.onclick = () => { botoesDiv.remove(); fecharModal(); };
-
-  const btnConfirmar = document.createElement('button');
-  btnConfirmar.id = 'adminConfirmarBtn';
-  btnConfirmar.textContent = 'Sim, apagar';
-  btnConfirmar.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all';
-  btnConfirmar.onclick = async () => {
-    botoesDiv.remove();
-    fecharModal();
-    try {
-      const res = await fetch(`${URL_API}/historico/concluidas`, {
-        method: 'DELETE',
-        headers: headersAuth()
-      });
-      if (checar401(res.status)) return;
-      const dados = await res.json();
-      mostrarModal('sucesso', dados.mensagem, true);
-      carregarDashboard();
-      carregarLista(abaAtiva);
-      carregarAnalytics();
-    } catch (err) {
-      console.error('Erro ao apagar histórico:', err);
-      mostrarModal('erro', 'Erro ao conectar com o servidor.');
+  _modalConfirmar(
+    'Sim, apagar',
+    'px-4 py-1.5 text-xs font-bold rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all',
+    async () => {
+      try {
+        const res = await fetch(`${URL_API}/historico/concluidas`, { method: 'DELETE', headers: headersAuth() });
+        if (checar401(res.status)) return;
+        const dados = await res.json();
+        mostrarModal('sucesso', dados.mensagem, true);
+        carregarDashboard();
+        carregarLista(abaAtiva);
+        carregarAnalytics();
+      } catch (err) {
+        console.error('Erro ao apagar histórico:', err);
+        mostrarModal('erro', 'Erro ao conectar com o servidor.');
+      }
     }
-  };
-
-  botoesDiv.appendChild(btnCancelar);
-  botoesDiv.appendChild(btnConfirmar);
-  barWrap ? modalCard.insertBefore(botoesDiv, barWrap) : modalCard.appendChild(botoesDiv);
+  );
 }
 
 // ------------------------------------------------------------
@@ -1175,148 +1108,74 @@ function atualizarBarraAcaoLote() {
 async function cancelarSelecionadas() {
   const selecionadas = Array.from(document.querySelectorAll('.check-reserva:checked')).map(c => parseInt(c.value));
   if (selecionadas.length === 0) return;
-
   mostrarModal('aviso', `Cancelar as ${selecionadas.length} reuniões selecionadas?`);
-
-  document.getElementById('adminConfirmarBtn')?.remove();
-  document.getElementById('adminCancelarBtn')?.remove();
-  document.getElementById('cancelMotivoPainel')?.remove();
-
-  const barWrap = document.getElementById('modalBarWrap');
-  const modalCard = document.getElementById('modalCard');
-
-  // Textarea de motivo
-  const motivoPainel = document.createElement('div');
-  motivoPainel.id = 'cancelMotivoPainel';
-  motivoPainel.className = 'mt-3';
-  motivoPainel.innerHTML = `
-    <textarea id="cancelMotivoTexto" rows="2" maxlength="300" placeholder="Motivo do cancelamento em lote (opcional)"
-      class="w-full text-xs rounded-lg bg-white/5 border border-white/10 text-slate-300 placeholder-slate-500 px-3 py-2 resize-none focus:outline-none focus:border-orange-400 transition-colors"></textarea>
-    <p class="text-[10px] text-slate-500 mt-0.5 text-right">Máx. 300 caracteres</p>
-  `;
-
-  const botoesDiv = document.createElement('div');
-  botoesDiv.className = 'flex gap-2 mt-3 justify-end';
-
-  const btnCancelar = document.createElement('button');
-  btnCancelar.id = 'adminCancelarBtn';
-  btnCancelar.textContent = 'Não';
-  btnCancelar.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-all';
-  btnCancelar.onclick = () => { motivoPainel.remove(); botoesDiv.remove(); fecharModal(); };
-
-  const btnConfirmar = document.createElement('button');
-  btnConfirmar.id = 'adminConfirmarBtn';
-  btnConfirmar.textContent = 'Sim, cancelar';
-  btnConfirmar.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-orange-500 hover:bg-orange-600 text-white transition-all';
-  btnConfirmar.onclick = async () => {
-    const motivo = document.getElementById('cancelMotivoTexto')?.value.trim() || '';
-    motivoPainel.remove();
-    botoesDiv.remove();
-    fecharModal();
-    try {
-      const res = await fetch(`${URL_API}/reservas/multiplas/cancelar`, {
-        method: 'PATCH',
-        headers: headersAuth(),
-        body: JSON.stringify({ ids: selecionadas, motivo })
-      });
-      if (checar401(res.status)) return;
-      const dados = await res.json();
-      if (res.ok) {
-        mostrarModal('sucesso', dados.mensagem, true);
-        carregarDashboard();
-        carregarLista(abaAtiva);
-        carregarAnalytics();
-      } else {
-        mostrarModal('erro', dados.mensagem || 'Erro ao cancelar as reuniões.');
+  _modalConfirmar(
+    'Sim, cancelar',
+    'px-4 py-1.5 text-xs font-bold rounded-lg bg-orange-500 hover:bg-orange-600 text-white transition-all',
+    async (motivo) => {
+      try {
+        const res = await fetch(`${URL_API}/reservas/multiplas/cancelar`, {
+          method: 'PATCH',
+          headers: headersAuth(),
+          body: JSON.stringify({ ids: selecionadas, motivo })
+        });
+        if (checar401(res.status)) return;
+        const dados = await res.json();
+        if (res.ok) {
+          mostrarModal('sucesso', dados.mensagem, true);
+          carregarDashboard();
+          carregarLista(abaAtiva);
+          carregarAnalytics();
+        } else {
+          mostrarModal('erro', dados.mensagem || 'Erro ao cancelar as reuniões.');
+        }
+      } catch (err) {
+        console.error('Erro:', err);
+        mostrarModal('erro', 'Erro ao conectar com o servidor.');
       }
-    } catch (err) {
-      console.error('Erro:', err);
-      mostrarModal('erro', 'Erro ao conectar com o servidor.');
-    }
-  };
-
-  botoesDiv.appendChild(btnCancelar);
-  botoesDiv.appendChild(btnConfirmar);
-  barWrap ? modalCard.insertBefore(motivoPainel, barWrap) : modalCard.appendChild(motivoPainel);
-  barWrap ? modalCard.insertBefore(botoesDiv, barWrap) : modalCard.appendChild(botoesDiv);
+    },
+    true
+  );
 }
 
 async function apagarSelecionadas() {
   const selecionadas = Array.from(document.querySelectorAll('.check-reserva:checked')).map(c => parseInt(c.value));
   if (selecionadas.length === 0) return;
-
   mostrarModal('aviso', `Deseja apagar definitivamente as ${selecionadas.length} reuniões selecionadas?`);
-
-  // Remove botões anteriores
-  document.getElementById('adminConfirmarBtn')?.remove();
-  document.getElementById('adminCancelarBtn')?.remove();
-
-  const barWrap = document.getElementById('modalBarWrap');
-  const modalCard = document.getElementById('modalCard');
-
-  const botoesDiv = document.createElement('div');
-  botoesDiv.className = 'flex gap-2 mt-4 justify-end';
-
-  const btnCancelar = document.createElement('button');
-  btnCancelar.id = 'adminCancelarBtn';
-  btnCancelar.textContent = 'Cancelar';
-  btnCancelar.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-all';
-  btnCancelar.onclick = () => { botoesDiv.remove(); fecharModal(); };
-
-  const btnConfirmar = document.createElement('button');
-  btnConfirmar.id = 'adminConfirmarBtn';
-  btnConfirmar.textContent = 'Sim, apagar';
-  btnConfirmar.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all';
-  btnConfirmar.onclick = async () => {
-    botoesDiv.remove();
-    fecharModal();
-    try {
-      const res = await fetch(`${URL_API}/reservas/multiplas`, {
-        method: 'DELETE',
-        headers: headersAuth(),
-        body: JSON.stringify({ ids: selecionadas })
-      });
-      if (checar401(res.status)) return;
-      const dados = await res.json();
-      if (res.ok) {
-        mostrarModal('sucesso', dados.mensagem, true);
-        carregarDashboard();
-        carregarLista(abaAtiva);
-        carregarAnalytics();
-      } else {
-        mostrarModal('erro', dados.mensagem || 'Erro ao apagar as reuniões.');
+  _modalConfirmar(
+    'Sim, apagar',
+    'px-4 py-1.5 text-xs font-bold rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all',
+    async () => {
+      try {
+        const res = await fetch(`${URL_API}/reservas/multiplas`, {
+          method: 'DELETE',
+          headers: headersAuth(),
+          body: JSON.stringify({ ids: selecionadas })
+        });
+        if (checar401(res.status)) return;
+        const dados = await res.json();
+        if (res.ok) {
+          mostrarModal('sucesso', dados.mensagem, true);
+          carregarDashboard();
+          carregarLista(abaAtiva);
+          carregarAnalytics();
+        } else {
+          mostrarModal('erro', dados.mensagem || 'Erro ao apagar as reuniões.');
+        }
+      } catch (err) {
+        console.error('Erro:', err);
+        mostrarModal('erro', 'Erro ao conectar com o servidor.');
       }
-    } catch (err) {
-      console.error('Erro:', err);
-      mostrarModal('erro', 'Erro ao conectar com o servidor.');
     }
-  };
-
-  botoesDiv.appendChild(btnCancelar);
-  botoesDiv.appendChild(btnConfirmar);
-  barWrap ? modalCard.insertBefore(botoesDiv, barWrap) : modalCard.appendChild(botoesDiv);
+  );
 }
 
-// ------------------------------------------------------------
-// ATUALIZAÇÃO EM TEMPO REAL — Server-Sent Events
-// ------------------------------------------------------------
-
-/** Conecta ao endpoint SSE e recarrega os dados ao receber eventos */
+// ── ATUALIZAÇÃO EM TEMPO REAL — Server-Sent Events ─────────────────────────────
 function iniciarSSE() {
-  // Fecha conexão anterior antes de criar nova (evita acúmulo ao pressionar F5)
   if (_sseConexao) { _sseConexao.close(); _sseConexao = null; }
-
   _sseConexao = new EventSource(`${URL_API.replace('/api', '')}/api/eventos`);
-
-  _sseConexao.addEventListener('atualizacao', () => {
-    // Evento SSE = algo mudou no banco (nova reunião, cancelamento etc)
-    // Inclui lista pois o conteúdo pode ter mudado por ação de outro usuário
-    dispararAtualizacao({ incluirLista: true });
-  });
-
-  _sseConexao.onerror = () => {
-    console.warn('SSE: conexão perdida, aguardando reconexão automática...');
-  };
+  _sseConexao.addEventListener('atualizacao', () => dispararAtualizacao({ incluirLista: true }));
+  _sseConexao.onerror = () => console.warn('SSE: conexão perdida, aguardando reconexão...');
 }
 
 /** Invalida o cache de uma aba e força a próxima carga a renderizar de novo */
@@ -1324,9 +1183,7 @@ function invalidarCacheLista(aba) {
   if (aba) { _cacheJson[aba] = null; } else { _cacheJson.proximos = null; _cacheJson.historico = null; }
 }
 
-// ------------------------------------------------------------
-// FILTROS DO HISTÓRICO
-// ------------------------------------------------------------
+// ── FILTROS DO HISTÓRICO ────────────────────────────────────────────────────────
 
 /** Aplica os filtros sobre os dados brutos do histórico e re-renderiza a lista */
 function aplicarFiltrosHistorico() {
@@ -1393,9 +1250,7 @@ function toggleFiltrosHistorico() {
   if (chevron) chevron.style.transform = aberto ? '' : 'rotate(90deg)';
 }
 
-// ------------------------------------------------------------
-// INICIALIZAÇÃO
-// ------------------------------------------------------------
+// ── INICIALIZAÇÃO ──────────────────────────────────────────────────────────────
 window.onload = () => {
   init();
   if (obterToken()) iniciarSSE();
@@ -1410,9 +1265,7 @@ window.onload = () => {
   if (usuario?.role === 'admin') verificarStatusNotion();
 };
 
-// ------------------------------------------------------------
-// NOTION — Sincronização com banco de dados do Notion
-// ------------------------------------------------------------
+// ── NOTION — Sincronização ──────────────────────────────────────────────────────
 
 /** Verifica no backend se o Notion está configurado e atualiza o badge no card admin */
 async function verificarStatusNotion() {
@@ -1465,9 +1318,7 @@ async function sincronizarNotion() {
   }
 }
 
-// ------------------------------------------------------------
-// ADMIN — Gerenciamento de Usuários
-// ------------------------------------------------------------
+// ── ADMIN — Gerenciamento de Usuários ──────────────────────────────────────────
 
 /** Abre/fecha o painel de usuários e carrega a lista se aberto */
 function togglePainelUsuarios() {
@@ -1573,11 +1424,9 @@ function editarUsuario(u) {
   
   document.getElementById('titulo-form-usuario').textContent = 'Editar Usuário';
   document.getElementById('btnSalvarUsuario').textContent = 'Salvar Alterações';
-  
   document.getElementById('formNovoUsuario').classList.remove('hidden');
 }
 
-/** Limpa o formulário e reseta estados de edição */
 function limparFormularioUsuarios() {
   document.getElementById('edit-usuario-id').value = '';
   document.getElementById('usuNome').value = '';
@@ -1585,61 +1434,32 @@ function limparFormularioUsuarios() {
   document.getElementById('usuSenha').value = '';
   document.getElementById('usuSenha').required = true;
   document.getElementById('usuRole').value = 'gestor';
-  
   document.getElementById('titulo-form-usuario').textContent = 'Novo Usuário';
   document.getElementById('btnSalvarUsuario').textContent = 'Criar Usuário';
-  
   document.getElementById('formNovoUsuario').classList.add('hidden');
 }
 
-/** Solicita exclusão de usuário do servidor */
 function excluirUsuario(id, nome) {
   mostrarModal('aviso', `Deseja realmente excluir o usuário "${escapeHtml(nome)}"? Esta ação não pode ser desfeita.`);
-
-  // Remove botões anteriores se existirem (re-uso do modal)
-  document.getElementById('adminConfirmarBtn')?.remove();
-  document.getElementById('adminCancelarBtn')?.remove();
-
-  const barWrap = document.getElementById('modalBarWrap');
-  const modalCard = document.getElementById('modalCard');
-
-  const botoesDiv = document.createElement('div');
-  botoesDiv.className = 'flex gap-2 mt-4 justify-end';
-
-  const btnNao = document.createElement('button');
-  btnNao.id = 'adminCancelarBtn';
-  btnNao.textContent = 'Não';
-  btnNao.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-all';
-  btnNao.onclick = () => { botoesDiv.remove(); fecharModal(); };
-
-  const btnSim = document.createElement('button');
-  btnSim.id = 'adminConfirmarBtn';
-  btnSim.textContent = 'Sim, excluir';
-  btnSim.className = 'px-4 py-1.5 text-xs font-bold rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all';
-  btnSim.onclick = async () => {
-    botoesDiv.remove();
-    fecharModal();
-    try {
-      const res = await fetch(`${URL_API}/admin/usuarios/${id}`, {
-        method: 'DELETE',
-        headers: headersAuth()
-      });
-      if (checar401(res.status)) return;
-      const dados = await res.json();
-      if (res.ok) {
-        mostrarModal('sucesso', dados.mensagem, true);
-        carregarUsuariosAdmin();
-        if (typeof carregarUsuariosParticipantes === 'function') carregarUsuariosParticipantes();
-      } else {
-        mostrarModal('erro', dados.mensagem || 'Erro ao excluir usuário.');
+  _modalConfirmar(
+    'Sim, excluir',
+    'px-4 py-1.5 text-xs font-bold rounded-lg bg-red-500 hover:bg-red-600 text-white transition-all',
+    async () => {
+      try {
+        const res = await fetch(`${URL_API}/admin/usuarios/${id}`, { method: 'DELETE', headers: headersAuth() });
+        if (checar401(res.status)) return;
+        const dados = await res.json();
+        if (res.ok) {
+          mostrarModal('sucesso', dados.mensagem, true);
+          carregarUsuariosAdmin();
+          if (typeof carregarUsuariosParticipantes === 'function') carregarUsuariosParticipantes();
+        } else {
+          mostrarModal('erro', dados.mensagem || 'Erro ao excluir usuário.');
+        }
+      } catch (err) {
+        console.error('Erro ao excluir usuário:', err);
+        mostrarModal('erro', 'Erro ao conectar com o servidor.');
       }
-    } catch (err) {
-      console.error('Erro ao excluir usuário:', err);
-      mostrarModal('erro', 'Erro ao conectar com o servidor.');
     }
-  };
-
-  botoesDiv.appendChild(btnNao);
-  botoesDiv.appendChild(btnSim);
-  barWrap ? modalCard.insertBefore(botoesDiv, barWrap) : modalCard.appendChild(botoesDiv);
-}
+  );
+}

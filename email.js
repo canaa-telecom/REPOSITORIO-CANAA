@@ -1,8 +1,8 @@
 // ── email.js ─────────────────────────────────────────────────
 // Módulo de envio de e-mails via SMTP (Nodemailer / Locaweb)
 // ─────────────────────────────────────────────────────────────
-require('dotenv').config();
 const nodemailer = require('nodemailer');
+
 
 // ── Transporte SMTP ─────────────────────────────────────────
 let transporter = null;

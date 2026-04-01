@@ -6,6 +6,8 @@ const path = require('path');
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { criarPaginaNotion, atualizarStatusNotion, atualizarPaginaNotion, cancelarPaginaNotion, arquivarPaginaNotion, sincronizarTodasReservas, notionConfigurado } = require('./notion');
 const { enviarConviteReuniao } = require('./email');
 
@@ -24,7 +26,26 @@ if (!JWT_SECRET) {
 const SALAS_PRESENCIAIS = ['Sala de Reunião', 'Sala do Presidente', 'Sala de Treinamento'];
 
 app.use(cors()); // Aceita qualquer origem — seguro para rede interna
-app.use(express.json());
+
+// ── SEGURANÇA: Headers HTTP (sem CSP — incompatível com Tailwind/inline scripts) ──
+app.use(helmet({
+  contentSecurityPolicy: false,     // CSP requer refatorar todos os inline scripts
+  crossOriginEmbedderPolicy: false, // Necessário para Google Fonts
+  crossOriginResourcePolicy: false, // Necessário para recursos externos
+}));
+
+// ── SEGURANÇA: Limita tamanho do payload JSON (evita ataques de payload gigante) ──
+app.use(express.json({ limit: '10kb' }));
+
+// ── SEGURANÇA: Bloqueia acesso direto a arquivos sensíveis do servidor ───────────
+const ARQUIVOS_SENSIVEIS = /^\/(server\.js|email\.js|notion\.js|package\.json|package-lock\.json|\.env|\.gitignore)$/i;
+app.use((req, res, next) => {
+  if (ARQUIVOS_SENSIVEIS.test(req.path)) {
+    return res.status(403).json({ erro: true, mensagem: 'Acesso negado.' });
+  }
+  next();
+});
+
 app.use(express.static(path.join(__dirname)));
 
 // ── 3. BANCO DE DADOS PostgreSQL ────────────────────────────
@@ -318,8 +339,18 @@ app.get('/api/eventos', (req, res) => {
   req.on('close', () => sseClients.delete(res));
 });
 
+// ── SEGURANÇA: Rate limiting — apenas na rota de login (anti brute-force) ────────
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,   // Janela de 15 minutos
+  max: 10,                     // Máximo 10 tentativas por IP
+  skipSuccessfulRequests: true, // Só conta tentativas falhas
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { erro: true, mensagem: 'Muitas tentativas de login. Tente novamente em 15 minutos.' }
+});
+
 // ── POST /api/login ──────────────────────────────────────────
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', loginLimiter, async (req, res) => {
   try {
     const { email, senha } = req.body;
     if (!email || !senha) {
@@ -664,8 +695,8 @@ app.patch('/api/reservas/:id/cancelar', autenticar, async (req, res) => {
       return res.status(404).json({ erro: true, mensagem: 'Reserva não encontrada.' });
     }
 
-    if (reserva.usuario_id !== req.usuario.id) {
-      return res.status(403).json({ erro: true, mensagem: 'Somente o criador da reunião pode cancelá-la.' });
+    if (reserva.usuario_id !== req.usuario.id && req.usuario.role !== 'admin') {
+      return res.status(403).json({ erro: true, mensagem: 'Somente o criador ou administrador pode cancelar esta reunião.' });
     }
     if (reserva.status === 'cancelada') {
       return res.status(400).json({ erro: true, mensagem: 'Esta reunião já está cancelada.' });
@@ -921,36 +952,22 @@ app.patch('/api/reservas/:id/presenca', autenticar, async (req, res) => {
 app.get('/api/historico', autenticar, async (req, res) => {
   try {
     const { id: usuarioId, role } = req.usuario;
-    let historico;
+    const isAdmin = role === 'admin';
 
-    if (role === 'admin') {
-      const histRes = await pool.query(`
-        SELECT r.*, u.nome AS gestor, u.email AS "emailGestor",
-               (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
-               (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = $1) AS "euConfirmei",
-               (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
-                JOIN ${TABLE_USERS} u2 ON u2.id = p2.usuario_id
-                WHERE p2.reserva_id = r.id) AS "participantesNomes"
-        FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
-        ORDER BY r.data DESC, r.horainicio ASC
-      `, [usuarioId]);
-      historico = histRes.rows;
-    } else {
-      const histRes = await pool.query(`
-        SELECT r.*, u.nome AS gestor,
-               (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
-               (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = $1) AS "euConfirmei",
-               (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
-                JOIN ${TABLE_USERS} u2 ON u2.id = p2.usuario_id
-                WHERE p2.reserva_id = r.id) AS "participantesNomes"
-        FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
-        WHERE r.usuario_id = $1
-        ORDER BY r.data DESC, r.horainicio ASC
-      `, [usuarioId]);
-      historico = histRes.rows;
-    }
+    const histRes = await pool.query(`
+      SELECT r.*, u.nome AS gestor,
+             ${isAdmin ? 'u.email AS "emailGestor",' : ''}
+             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
+             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = $1) AS "euConfirmei",
+             (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
+              JOIN ${TABLE_USERS} u2 ON u2.id = p2.usuario_id
+              WHERE p2.reserva_id = r.id) AS "participantesNomes"
+      FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
+      ${isAdmin ? '' : 'WHERE r.usuario_id = $1'}
+      ORDER BY r.data DESC, r.horainicio ASC
+    `, [usuarioId]);
 
-    const comStatus = historico.map(r => {
+    const comStatus = histRes.rows.map(r => {
       const checkEuConfirmei = r.euconfirmei ?? r.euConfirmei;
       const partNomes = r.participantesnomes || r.participantesNomes;
       const horaInicio = r.horainicio || r.horaInicio;
@@ -987,7 +1004,7 @@ app.delete('/api/historico/concluidas', autenticar, apenasAdmin, async (req, res
         AND notion_page_id IS NOT NULL
         AND (
           data < $1
-          OR (data = $1 AND horafim <= $2)
+          OR (data = $1 AND horafim < $2)
         )
     `, [dataHoje, agora]);
 
@@ -996,7 +1013,7 @@ app.delete('/api/historico/concluidas', autenticar, apenasAdmin, async (req, res
       WHERE status = 'confirmada'
         AND (
           data < $1
-          OR (data = $1 AND horafim <= $2)
+          OR (data = $1 AND horafim < $2)
         )
     `, [dataHoje, agora]);
 
@@ -1090,6 +1107,10 @@ app.post('/api/admin/usuarios', autenticar, apenasAdmin, async (req, res) => {
     return res.status(400).json({ mensagem: 'Preencha todos os campos obrigatórios.' });
   }
 
+  if (senha.length < 8) {
+    return res.status(400).json({ mensagem: 'A senha deve ter no mínimo 8 caracteres.' });
+  }
+
   try {
     const hash = bcrypt.hashSync(senha, 10);
     console.log(`[ADMIN] Hash gerado com sucesso.`);
@@ -1123,6 +1144,9 @@ app.delete('/api/admin/usuarios/:id', autenticar, apenasAdmin, async (req, res) 
     await pool.query(`DELETE FROM ${TABLE_USERS} WHERE id = $1`, [id]);
     res.json({ mensagem: 'Usuário removido permanentemente.' });
   } catch (err) {
+    if (err.code === '23503') {
+      return res.status(400).json({ mensagem: 'Não é possível excluir: este usuário possui reuniões cadastradas no sistema.' });
+    }
     res.status(500).json({ mensagem: 'Erro ao remover usuário.' });
   }
 });

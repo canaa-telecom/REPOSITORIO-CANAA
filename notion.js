@@ -63,6 +63,10 @@ function tzOffset() {
 function montarPropriedades(reserva, participantes = [], statusDinamico = 'Agendada') {
     const statusNotion = STATUS_MAP[statusDinamico];
 
+    // PostgreSQL retorna colunas em minúsculas — normaliza antes de usar
+    const horaInicio = reserva.horainicio || reserva.horaInicio || '';
+    const horaFim    = reserva.horafim    || reserva.horaFim    || '';
+
     // Monta texto de responsável + participantes para o campo Observações
     const linhas = [];
     if (reserva.gestor) linhas.push(`Responsável: ${reserva.gestor}`);
@@ -78,11 +82,11 @@ function montarPropriedades(reserva, participantes = [], statusDinamico = 'Agend
         // 2. Data/hora da reunião (campo tem nome "09/02/2026" no banco)
         '09/02/2026': {
             date: reserva.data ? {
-                start: reserva.horaInicio
-                    ? `${reserva.data}T${reserva.horaInicio}:00${tzOffset()}`
+                start: horaInicio
+                    ? `${reserva.data}T${horaInicio}:00${tzOffset()}`
                     : reserva.data,
-                end: reserva.horaFim
-                    ? `${reserva.data}T${reserva.horaFim}:00${tzOffset()}`
+                end: horaFim
+                    ? `${reserva.data}T${horaFim}:00${tzOffset()}`
                     : null
             } : null
         },
