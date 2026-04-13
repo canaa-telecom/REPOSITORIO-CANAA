@@ -81,7 +81,7 @@ function gerarLinksCalendario({ tituloReuniao, data, horaInicio, horaFim, nomeOr
   return { googleUrl, outlookUrl };
 }
 
-function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, horaFim, modalidade, linkReuniao, nomeOrganizador, preAta, sala }) {
+function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, horaFim, modalidade, linkReuniao, nomeOrganizador, preAta, sala, tokenRecuso, baseUrl }) {
   const dataFormatada = (() => {
     if (!data) return '—';
     const [ano, mes, dia] = data.split('-');
@@ -136,6 +136,20 @@ function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, ho
             </td>
           </tr>
         </table>
+      </td>
+    </tr>` : '';
+
+  const recusoBlock = tokenRecuso && baseUrl ? `
+    <tr>
+      <td align="center" style="padding: 0 32px 24px;">
+        <p style="margin: 0 0 10px; font-size: 10px; font-weight: 700; text-transform: uppercase;
+                   letter-spacing: 0.12em; color: #64748b;">Não poderá participar?</p>
+        <a href="${baseUrl}/api/presenca/recusar?token=${tokenRecuso}"
+          style="display:inline-block; background: #ffffff; border: 1px solid #fecaca;
+                 color: #dc2626; text-decoration: none; font-weight: 600; font-size: 11px;
+                 padding: 8px 20px; border-radius: 8px; letter-spacing: 0.02em;">
+          🚫 Recusar Presença
+        </a>
       </td>
     </tr>` : '';
 
@@ -297,6 +311,9 @@ function templateConvite({ nomeParticipante, tituloReuniao, data, horaInicio, ho
           <!-- Botões de calendário -->
           ${calendarBlock}
 
+          <!-- Botão Recusar -->
+          ${recusoBlock}
+
           <!-- Pauta / Pré-Ata -->
           ${pautaBlock}
 
@@ -376,4 +393,76 @@ async function enviarConviteReuniao(params) {
   }
 }
 
-module.exports = { enviarConviteReuniao };
+/**
+ * Envia notificação ao organizador informando que um participante recusou o convite.
+ */
+async function enviarNotificacaoRecuso({ emailOrganizador, nomeOrganizador, nomeParticipante, tituloReuniao, data }) {
+  const t = getTransporter();
+  if (!t) return false;
+
+  const dataFormatada = (() => {
+    if (!data) return '—';
+    const [ano, mes, dia] = data.split('-');
+    return `${dia}/${mes}/${ano}`;
+  })();
+
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Recusa de Convite</title>
+</head>
+<body style="margin:0; padding:0; background:#f8fafc; font-family: sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="500" style="background:#ffffff; border-radius:12px; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1); overflow:hidden;">
+          <tr>
+            <td style="background:#ef4444; padding:20px; text-align:center;">
+              <h2 style="margin:0; color:#ffffff; font-size:18px;">🚫 Convite Recusado</h2>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <p style="margin:0; font-size:15px; color:#334155; line-height:1.6;">
+                Olá, <strong>${escHtml(nomeOrganizador)}</strong>,
+              </p>
+              <p style="margin:16px 0 0; font-size:14px; color:#475569; line-height:1.6;">
+                O participante <strong>${escHtml(nomeParticipante)}</strong> informou que <strong>não poderá comparecer</strong> à reunião abaixo:
+              </p>
+              <div style="margin-top:24px; padding:16px; background:#f1f5f9; border-radius:8px;">
+                <p style="margin:0; font-size:13px; font-weight:700; color:#1e293b;">${escHtml(tituloReuniao)}</p>
+                <p style="margin:4px 0 0; font-size:12px; color:#64748b;">Data: ${dataFormatada}</p>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 32px 32px; text-align:center;">
+              <p style="margin:0; font-size:11px; color:#94a3b8;">
+                Este é um aviso automático do Sistema de Reservas Canaã Telecom.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  try {
+    await t.sendMail({
+      from: process.env.SMTP_FROM || '"Canaã Telecom" <noreply@canaatelecom.com.br>',
+      to: emailOrganizador,
+      subject: `🚫 Recusa de Convite: ${tituloReuniao}`,
+      html
+    });
+    console.log(`📧 Notificação de recusa enviada para ${emailOrganizador} (Organizador)`);
+    return true;
+  } catch (err) {
+    console.error(`❌ Falha ao enviar notificação de recusa para ${emailOrganizador}:`, err.message);
+    return false;
+  }
+}
+
+module.exports = { enviarConviteReuniao, enviarNotificacaoRecuso };

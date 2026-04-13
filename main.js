@@ -740,11 +740,21 @@ function renderCartaoReserva(r) {
   // Nomes dos participantes — visível para todos
   const nomesHtml = participantes.length > 0 ? `
     <div id="rsvp-nomes-${r.id}" class="flex flex-wrap gap-1 px-3 pb-1.5">
-      ${participantes.map(n => `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 font-medium">${escapeHtml(n)}</span>`).join('')}
+      ${participantes.map(pInfo => {
+        const parts = pInfo.split(':');
+        const nome = parts[0];
+        const status = parts[1] || 'confirmado';
+        const isRecusado = status === 'recusado';
+        
+        if (isRecusado) {
+          return `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-red-50 text-red-500 dark:bg-red-900/20 dark:text-red-400 font-medium line-through opacity-70" title="Recusou a participação">${escapeHtml(nome)}</span>`;
+        }
+        return `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 font-medium">${escapeHtml(nome)}</span>`;
+      }).join('')}
     </div>` : `<div id="rsvp-nomes-${r.id}"></div>`;
 
-  // Botão de cancelar — somente o criador, só quando a reunião ainda pode ser cancelada
-  const podeCancelar = criadorDaReuniao &&
+  // Botão de cancelar — somente administradores podem cancelar reuniões
+  const podeCancelar = isAdmin &&
     (r.statusDinamico === 'Agendada' || r.statusDinamico === 'Em andamento');
   const cancelBtn = podeCancelar ? `
     <button onclick="solicitarCancelamento(${r.id}, '${escapeHtml(r.titulo)}')" title="Cancelar reunião"

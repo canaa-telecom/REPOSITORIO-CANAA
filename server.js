@@ -9,7 +9,7 @@ const bcrypt = require('bcryptjs');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { criarPaginaNotion, atualizarStatusNotion, atualizarPaginaNotion, cancelarPaginaNotion, arquivarPaginaNotion, sincronizarTodasReservas, notionConfigurado } = require('./notion');
-const { enviarConviteReuniao } = require('./email');
+const { enviarConviteReuniao, enviarNotificacaoRecuso } = require('./email');
 
 // ── 2. CONFIGURAÇÃO ─────────────────────────────────────────
 const app = express();
@@ -136,6 +136,7 @@ async function inicializarBanco() {
         id         SERIAL PRIMARY KEY,
         reserva_id INTEGER NOT NULL,
         usuario_id INTEGER NOT NULL,
+        status     VARCHAR(50) NOT NULL DEFAULT 'confirmado',
         UNIQUE(reserva_id, usuario_id),
         FOREIGN KEY (reserva_id) REFERENCES reservas(id) ON DELETE CASCADE,
         FOREIGN KEY (usuario_id) REFERENCES ${TABLE_USERS}(id)
@@ -220,6 +221,14 @@ async function migrarBanco() {
     if (!colunas.includes('sala')) {
       await pool.query("ALTER TABLE reservas ADD COLUMN sala VARCHAR(100) NOT NULL DEFAULT 'Sala de Reunião'");
       console.log('✅ Migração: coluna sala adicionada');
+    }
+
+    // Migração para a tabela de presenças
+    const colPresRes = await pool.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'presencas'");
+    const colunasPres = colPresRes.rows.map(c => c.column_name);
+    if (!colunasPres.includes('status')) {
+      await pool.query("ALTER TABLE presencas ADD COLUMN status VARCHAR(50) NOT NULL DEFAULT 'confirmado'");
+      console.log('✅ Migração: coluna status adicionada na tabela presencas');
     }
 
   } catch (err) {
@@ -460,9 +469,9 @@ app.get('/api/reservas', autenticar, async (req, res) => {
     const reservasRes = await pool.query(`
       SELECT r.*,
              u.nome AS gestor,
-             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
-             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = $1) AS "euConfirmei",
-             (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
+             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.status = 'confirmado') AS confirmados,
+             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = $1 AND p.status = 'confirmado') AS "euConfirmei",
+             (SELECT STRING_AGG(u2.nome || ':' || p2.status, '||') FROM presencas p2
               JOIN ${TABLE_USERS} u2 ON u2.id = p2.usuario_id
               WHERE p2.reserva_id = r.id) AS "participantesNomes"
       FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
@@ -596,14 +605,14 @@ app.post('/api/reservas', autenticar, async (req, res) => {
       INSERT INTO reservas (usuario_id, titulo, data, horaInicio, horaFim, status, modalidade, sala, link_reuniao, pre_ata)
       VALUES ($1, $2, $3, $4, $5, 'confirmada', $6, $7, $8, $9)
       RETURNING id
-    `, [usuario_id, titulo, data, horaInicio, horaFim, modalidade, sala, link_reuniao || null, pre_ata || null]);
+    `, [usuario_id, titulo, data, horaInicio, horaFim, modalidade, sala || 'Online', link_reuniao || null, pre_ata || null]);
 
     const novaId = insertRes.rows[0].id;
 
     for (const pid of idsValidos) {
       await pool.query(
-        'INSERT INTO presencas (reserva_id, usuario_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-        [novaId, pid]
+        'INSERT INTO presencas (reserva_id, usuario_id, status) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+        [novaId, pid, 'confirmado']
       );
     }
 
@@ -647,6 +656,12 @@ app.post('/api/reservas', autenticar, async (req, res) => {
         const horaInicioEmail = novaReserva.horainicio || novaReserva.horaInicio;
         const horaFimEmail = novaReserva.horafim || novaReserva.horaFim;
         for (const p of participantesInfo) {
+          const tokenRecuso = jwt.sign(
+            { reservaId: novaReserva.id, usuarioId: p.id, action: 'recusar' },
+            JWT_SECRET,
+            { expiresIn: '7d' }
+          );
+
           enviarConviteReuniao({
             emailDestinatario: p.email,
             nomeParticipante: p.nome,
@@ -658,7 +673,9 @@ app.post('/api/reservas', autenticar, async (req, res) => {
             sala: novaReserva.sala || null,
             linkReuniao: novaReserva.link_reuniao || null,
             nomeOrganizador: novaReserva.gestor,
-            preAta: novaReserva.pre_ata || null
+            preAta: novaReserva.pre_ata || null,
+            tokenRecuso,
+            baseUrl: process.env.BASE_URL || `http://localhost:${PORT}`
           });
         }
       }).catch(err => console.error('E-mail: erro ao buscar participantes:', err.message));
@@ -695,8 +712,8 @@ app.patch('/api/reservas/:id/cancelar', autenticar, async (req, res) => {
       return res.status(404).json({ erro: true, mensagem: 'Reserva não encontrada.' });
     }
 
-    if (reserva.usuario_id !== req.usuario.id && req.usuario.role !== 'admin') {
-      return res.status(403).json({ erro: true, mensagem: 'Somente o criador ou administrador pode cancelar esta reunião.' });
+    if (req.usuario.role !== 'admin') {
+      return res.status(403).json({ erro: true, mensagem: 'Somente administradores podem cancelar reuniões agendadas.' });
     }
     if (reserva.status === 'cancelada') {
       return res.status(400).json({ erro: true, mensagem: 'Esta reunião já está cancelada.' });
@@ -770,8 +787,8 @@ app.delete('/api/reservas/:id', autenticar, async (req, res) => {
       return res.status(404).json({ erro: true, mensagem: 'Reserva não encontrada.' });
     }
 
-    if (req.usuario.role !== 'admin' && reserva.usuario_id !== req.usuario.id) {
-      return res.status(403).json({ erro: true, mensagem: 'Você não tem permissão para apagar esta reunião.' });
+    if (req.usuario.role !== 'admin') {
+      return res.status(403).json({ erro: true, mensagem: 'Acesso negado. Somente administradores podem apagar reuniões.' });
     }
 
     await pool.query('DELETE FROM reservas WHERE id = $1', [id]);
@@ -859,7 +876,7 @@ app.post('/api/notion/sync', autenticar, apenasAdmin, async (req, res) => {
 
     const reservasRes = await pool.query(`
       SELECT r.*, u.nome AS gestor,
-             (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
+             (SELECT STRING_AGG(u2.nome || ':' || p2.status, '||') FROM presencas p2
               JOIN ${TABLE_USERS} u2 ON u2.id = p2.usuario_id
               WHERE p2.reserva_id = r.id) AS "participantesNomes"
       FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
@@ -908,21 +925,28 @@ app.patch('/api/reservas/:id/presenca', autenticar, async (req, res) => {
     const resReserva = await pool.query('SELECT id FROM reservas WHERE id = $1', [reservaId]);
     if (resReserva.rows.length === 0) return res.status(404).json({ erro: true, mensagem: 'Reserva não encontrada.' });
 
-    const presRes = await pool.query('SELECT id FROM presencas WHERE reserva_id = $1 AND usuario_id = $2', [reservaId, usuarioId]);
-    const jaConfirmou = presRes.rows.length > 0;
+    const presRes = await pool.query('SELECT id, status FROM presencas WHERE reserva_id = $1 AND usuario_id = $2', [reservaId, usuarioId]);
+    const registroExistente = presRes.rows[0];
 
-    if (jaConfirmou) {
-      await pool.query('DELETE FROM presencas WHERE reserva_id = $1 AND usuario_id = $2', [reservaId, usuarioId]);
+    if (registroExistente) {
+      if (registroExistente.status === 'recusado') {
+        // Se estava recusado, volta a ser confirmado
+        await pool.query('UPDATE presencas SET status = $1 WHERE reserva_id = $2 AND usuario_id = $3', ['confirmado', reservaId, usuarioId]);
+      } else {
+        // Se já estava confirmado, remove a presença (comportamento original de toggle)
+        await pool.query('DELETE FROM presencas WHERE reserva_id = $1 AND usuario_id = $2', [reservaId, usuarioId]);
+      }
     } else {
-      await pool.query('INSERT INTO presencas (reserva_id, usuario_id) VALUES ($1, $2)', [reservaId, usuarioId]);
+      // Se não existia, insere como confirmado
+      await pool.query('INSERT INTO presencas (reserva_id, usuario_id, status) VALUES ($1, $2, $3)', [reservaId, usuarioId, 'confirmado']);
     }
 
-    const confRes = await pool.query('SELECT COUNT(*) AS total FROM presencas WHERE reserva_id = $1', [reservaId]);
+    const confRes = await pool.query("SELECT COUNT(*) AS total FROM presencas WHERE reserva_id = $1 AND status = 'confirmado'", [reservaId]);
     const confirmados = parseInt(confRes.rows[0].total, 10);
 
     res.json({
       erro: false,
-      confirmou: !jaConfirmou,
+      confirmou: !registroExistente || registroExistente.status === 'recusado',
       confirmados
     });
     notificarClientes();
@@ -948,6 +972,85 @@ app.patch('/api/reservas/:id/presenca', autenticar, async (req, res) => {
   }
 });
 
+// ── GET /api/presenca/recusar ─────────────────────────────
+/** Rota pública (via token) para recusar presença a partir do e-mail */
+app.get('/api/presenca/recusar', async (req, res) => {
+  try {
+    const { token } = req.query;
+    if (!token) return res.status(400).send('<h1>Erro</h1><p>Token não fornecido.</p>');
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded.action !== 'recusar') throw new Error('Ação inválida');
+
+    const { reservaId, usuarioId } = decoded;
+
+    // Busca dados necessários para a notificação
+    const infoRes = await pool.query(`
+      SELECT r.titulo, r.data, r.usuario_id AS "organizadorId",
+             u_org.nome AS "nomeOrganizador", u_org.email AS "emailOrganizador",
+             u_part.nome AS "nomeParticipante"
+      FROM reservas r
+      JOIN ${TABLE_USERS} u_org ON u_org.id = r.usuario_id
+      JOIN ${TABLE_USERS} u_part ON u_part.id = $1
+      WHERE r.id = $2
+    `, [usuarioId, reservaId]);
+
+    const info = infoRes.rows[0];
+    if (!info) return res.status(404).send('<h1>Erro</h1><p>Reunião ou participante não encontrado.</p>');
+
+    // Atualiza status para recusado
+    const updateRes = await pool.query(
+      'UPDATE presencas SET status = $1 WHERE reserva_id = $2 AND usuario_id = $3',
+      ['recusado', reservaId, usuarioId]
+    );
+
+    if (updateRes.rowCount === 0) {
+      return res.status(400).send('<h1>Erro</h1><p>Participante não faz parte desta reunião ou já foi removido.</p>');
+    }
+
+    // Envia e-mail ao organizador
+    enviarNotificacaoRecuso({
+      emailOrganizador: info.emailOrganizador,
+      nomeOrganizador: info.nomeOrganizador,
+      nomeParticipante: info.nomeParticipante,
+      tituloReuniao: info.titulo,
+      data: info.data
+    });
+
+    notificarClientes();
+
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Recusa Confirmada</title>
+        <style>
+          body { font-family: sans-serif; background: #f1f5f9; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+          .card { background: white; padding: 40px; border-radius: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }
+          h1 { color: #ef4444; margin-bottom: 16px; font-size: 24px; }
+          p { color: #475569; line-height: 1.6; }
+          .btn { display: inline-block; margin-top: 24px; padding: 12px 24px; background: #3b82f6; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h1>Recusa Confirmada</h1>
+          <p>Você recusou o convite para a reunião <strong>${info.titulo}</strong>.</p>
+          <p>O organizador foi notificado.</p>
+          <a href="/" class="btn">Voltar ao Sistema</a>
+        </div>
+      </body>
+      </html>
+    `);
+
+  } catch (err) {
+    console.error('Erro ao recusar presença via link:', err.message);
+    res.status(401).send('<h1>Erro</h1><p>Link inválido ou expirado.</p>');
+  }
+});
+
 // ── GET /api/historico ─────────────────────────────────────────
 app.get('/api/historico', autenticar, async (req, res) => {
   try {
@@ -957,13 +1060,12 @@ app.get('/api/historico', autenticar, async (req, res) => {
     const histRes = await pool.query(`
       SELECT r.*, u.nome AS gestor,
              ${isAdmin ? 'u.email AS "emailGestor",' : ''}
-             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id) AS confirmados,
-             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = $1) AS "euConfirmei",
-             (SELECT STRING_AGG(u2.nome, '||') FROM presencas p2
+             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.status = 'confirmado') AS confirmados,
+             (SELECT COUNT(*) FROM presencas p WHERE p.reserva_id = r.id AND p.usuario_id = $1 AND p.status = 'confirmado') AS "euConfirmei",
+             (SELECT STRING_AGG(u2.nome || ':' || p2.status, '||') FROM presencas p2
               JOIN ${TABLE_USERS} u2 ON u2.id = p2.usuario_id
               WHERE p2.reserva_id = r.id) AS "participantesNomes"
       FROM reservas r JOIN ${TABLE_USERS} u ON u.id = r.usuario_id
-      ${isAdmin ? '' : 'WHERE r.usuario_id = $1'}
       ORDER BY r.data DESC, r.horainicio ASC
     `, [usuarioId]);
 
